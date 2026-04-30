@@ -12,7 +12,7 @@ import Observation
 final class UsageStore {
     private(set) var snapshot: UsageSnapshot?
     private(set) var lastRefresh: Date?
-    private(set) var lastError: AnthropicAPI.APIError?
+    private(set) var lastError: AppError?
 
     func updateSnapshot(_ snapshot: UsageSnapshot, at date: Date = Date()) {
         self.snapshot = snapshot
@@ -20,11 +20,10 @@ final class UsageStore {
         self.lastError = nil
     }
 
-    func recordError(_ error: AnthropicAPI.APIError) {
+    func recordError(_ error: AppError) {
         self.lastError = error
     }
 
-    /// Used when the user signs out: forget all cached data.
     func clear() {
         self.snapshot = nil
         self.lastRefresh = nil

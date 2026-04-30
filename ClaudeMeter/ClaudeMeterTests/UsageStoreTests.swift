@@ -17,7 +17,7 @@ struct UsageStoreTests {
     @Test("updateSnapshot sets snapshot + timestamp and clears error")
     func updateClearsError() {
         let store = UsageStore()
-        store.recordError(.unauthorized)
+        store.recordError(.api(.unauthorized))
         #expect(store.lastError != nil)
 
         let snapshot = UsageSnapshot(
@@ -41,7 +41,7 @@ struct UsageStoreTests {
         )
         store.updateSnapshot(snapshot)
 
-        store.recordError(.unauthorized)
+        store.recordError(.api(.unauthorized))
 
         #expect(store.snapshot == snapshot, "snapshot should survive a recorded error")
         #expect(store.lastError != nil)
@@ -51,7 +51,7 @@ struct UsageStoreTests {
     func clearWipes() {
         let store = UsageStore()
         store.updateSnapshot(UsageSnapshot(fiveHour: nil, sevenDay: nil))
-        store.recordError(.unauthorized)
+        store.recordError(.api(.unauthorized))
         store.clear()
         #expect(store.snapshot == nil)
         #expect(store.lastRefresh == nil)

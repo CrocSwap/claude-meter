@@ -78,16 +78,28 @@ actor UsagePoller {
     }
 
     private func pollOnce() async {
+        let token: String
         do {
-            let token = try await tokenSource()
+            token = try await tokenSource()
+        } catch let err as TokenReader.ReadError {
+            await store.recordError(.tokenRead(err))
+            consecutiveFailures += 1
+            return
+        } catch {
+            await store.recordError(.api(.network(underlying: error)))
+            consecutiveFailures += 1
+            return
+        }
+
+        do {
             let snapshot = try await AnthropicAPI.fetchUsage(token: token, session: session)
             await store.updateSnapshot(snapshot)
             consecutiveFailures = 0
         } catch let err as AnthropicAPI.APIError {
-            await store.recordError(err)
+            await store.recordError(.api(err))
             consecutiveFailures += 1
         } catch {
-            await store.recordError(.network(underlying: error))
+            await store.recordError(.api(.network(underlying: error)))
             consecutiveFailures += 1
         }
     }

@@ -1,143 +1,120 @@
-# Auth: claude-meter's OAuth flow
+# Auth: reading Claude desktop's locally-cached OAuth token
 
-claude-meter performs its own OAuth 2.0 sign-in (Authorization Code grant + PKCE) on first launch. Tokens are stored in the macOS Keychain under a service we own. We do not read any other app's storage.
+claude-meter is a passive read-only consumer of Claude desktop's existing OAuth state. We don't run an OAuth flow, don't register a third-party client, and don't store our own tokens. On every poll we decrypt the token Claude desktop has already cached on disk and use it for one HTTP call to `/api/oauth/usage`.
 
-This document describes the design and tracks the unresolved questions that block implementation.
+## Why this design
 
-## Last updated
+We considered (and started building) a first-party OAuth flow with our own `client_id`, but Anthropic's policy as of early 2026 explicitly restricts subscription OAuth to Claude.ai and Claude Code. See "Policy context" at the bottom for sources. The Keychain-reader path avoids the third-party-OAuth question entirely — the tokens we use were issued to *Anthropic's own* `client_id`s for the user's own Claude desktop install on the user's own machine.
 
-- 2026-04-30 — pivoted from "read Claude desktop's encrypted token" to first-party OAuth.
-- 2026-04-30 — empirical reconnaissance against Claude desktop's local token cache pinned several previously open answers. See "Empirical findings" below.
+This approach also has a nontrivial trade-off: a scary-looking macOS Keychain prompt the first time the app runs (cross-app Keychain reads always trigger a system dialog). For an open-source personal utility this is acceptable; for a broader-audience product it would not be.
 
-## Empirical findings (from Claude desktop's local token cache)
+## Last verified
 
-By inspecting the structure of the OAuth token cache that Claude desktop maintains locally — without using the tokens or storing them — we have concrete answers to several previously open questions:
+- 2026-04-30 — Claude desktop 1.4758.0, on macOS 25.4 (Darwin 25.4.0).
 
-| Question | Answer |
-|----------|--------|
-| Does Anthropic support multi-client OAuth? | **Yes.** Three distinct UUID-style `client_id`s observed (Claude desktop, Claude Code CLI, and a "Claude for Office" client). Implies registration is possible — though the *process* for third parties is still TBD. |
-| Audience | `https://api.anthropic.com` |
-| Scope namespace | `user:<resource>[:<sub>]`. Observed: `user:profile`, `user:inference`, `user:file_upload`, `user:office`, `user:sessions:claude_code`. |
-| Required scope for `/api/oauth/usage` | **`user:profile`** — the API explicitly says so in 403 responses. |
-| Token format | Opaque ~108-char string. **Not a JWT** — we cannot decode `exp` from the token itself. |
-| Token-exchange response shape (observed) | `{ token: String, refreshToken: String, expiresAt: Int (ms epoch), subscriptionType?: String, rateLimitTier?: String }`. Note `expiresAt` is **milliseconds**, not seconds. |
-| Bearer header name in API calls | Standard `Authorization: Bearer <token>`. The `anthropic-beta: oauth-2025-04-20` header is also required on `/api/oauth/usage`. |
+## Hard dependencies
 
-For the OAuth flow we will build, request scope `user:profile`. Add `user:inference`/etc. only if a future feature actually needs them.
+- Claude desktop must be installed (`/Applications/Claude.app`).
+- The user must be signed in to Claude desktop with a Pro/Max account.
+- Claude desktop must launch at least occasionally so its background task can refresh tokens. If Claude desktop hasn't run in long enough that the cached access token has expired, claude-meter will get HTTP 401 and surface "Open Claude desktop to refresh your sign-in" until the user does so.
 
-## Still open
+## Data sources
 
-| Question | Why it matters |
-|----------|---------------|
-| **Is there a public OAuth client registration program for third-party apps?** | We have empirical proof multi-client OAuth exists; we don't know how to register our own `client_id` legitimately. This is the biggest unresolved blocker. |
-| Authorization endpoint URL | Likely `https://claude.ai/oauth/authorize` or `https://auth.anthropic.com/...`; needs confirmation. |
-| Token endpoint URL | Likely under `api.anthropic.com`; needs confirmation. |
-| Accepted redirect URI patterns for native apps | Determines whether we use `claude-meter://oauth/callback` (custom scheme) or `http://127.0.0.1:<port>/callback` (loopback). |
-| Access token / refresh token TTLs | We saw `expiresAt` values ~30 days out for Claude desktop's tokens. Confirm typical values; drives proactive-refresh behavior. |
-| Client secret requirement | We assume PKCE-only (no `client_secret`). Verify Anthropic's spec rejects flows that demand embedded secrets. |
-
-If a public registration program is unavailable, do **not** reuse another Anthropic app's `client_id`. See "Fallback path" below.
-
-## Design (assuming OAuth is available)
-
-### Flow
-
-```
-┌──────────────┐                                     ┌──────────────────┐
-│  claude-     │  1. user clicks "Sign in"           │   Anthropic      │
-│  meter       │ ─────────────────────────────────►  │   auth endpoint  │
-│  (popover)   │     ASWebAuthenticationSession      │                  │
-│              │     ?response_type=code             │                  │
-│              │     &client_id=<ours>               │                  │
-│              │     &redirect_uri=claude-meter://…  │                  │
-│              │     &code_challenge=<S256>          │                  │
-│              │     &scope=<usage:read?>            │                  │
-│              │     &state=<random>                 │                  │
-│              │                                     │                  │
-│              │  2. user signs in on anthropic.com  │                  │
-│              │  3. callback claude-meter://oauth/  │                  │
-│              │     callback?code=…&state=…         │                  │
-│              │ ◄─────────────────────────────────  │                  │
-│              │                                     │                  │
-│              │  4. POST /token                     │                  │
-│              │     grant_type=authorization_code   │                  │
-│              │     code=…                          │                  │
-│              │     code_verifier=…                 │                  │
-│              │     client_id=<ours>                │                  │
-│              │     redirect_uri=claude-meter://…   │                  │
-│              │ ─────────────────────────────────►  │                  │
-│              │                                     │                  │
-│              │  5. { access_token, refresh_token,  │                  │
-│              │       expires_in, token_type }      │                  │
-│              │ ◄─────────────────────────────────  │                  │
-│              │                                     │                  │
-│              │  6. tokens → Keychain               │                  │
-└──────────────┘                                     └──────────────────┘
-```
-
-### PKCE specifics
-
-- `code_verifier`: 43–128 chars from `[A-Z][a-z][0-9]-._~`. Generate 96 random bytes, base64url-encode (no padding), trim if needed.
-- `code_challenge`: `base64url(sha256(code_verifier))`, no padding.
-- `code_challenge_method`: `S256`.
-- `state`: 32 random bytes, base64url. Verified on callback to defeat CSRF.
-
-### Token storage
-
-Single Keychain item:
+### Keychain entry (the AES key)
 
 | Field | Value |
 |-------|-------|
 | Class | `kSecClassGenericPassword` |
-| Service (`kSecAttrService`) | `dev.claudemeter.oauth` |
-| Account (`kSecAttrAccount`) | A fixed string like `default`. Anthropic's tokens are opaque (not JWTs), so there's no embedded user identifier. If a future API gives us an account ID, switch to it. |
-| Data | UTF-8 JSON: `{"token":"<opaque ~108 chars>","refreshToken":"<opaque>","expiresAt":<ms-epoch int>}`. Field names mirror what we expect from Anthropic's token endpoint (per empirical observation) so round-tripping is trivial. |
-| Access | App-only ACL (`kSecAttrAccessibleWhenUnlocked`). No ACL prompts on read after creation by the same signed binary. |
+| Service (`kSecAttrService`) | `Claude Safe Storage` |
+| Account (`kSecAttrAccount`) | `Claude` |
 
-Why a single JSON blob and not multiple Keychain items: simplifies atomicity. Read once, parse, done.
+A second account `Claude Key` exists under the same service. Empirically the OAuth cache decrypts using `Claude`. If `Claude` ever fails to decrypt a v10 blob in the future, fall back to `Claude Key` before giving up.
 
-### Refresh logic
+### Encrypted blob (the token cache)
 
-- Before any API call, `OAuthClient.currentAccessToken()` checks if `expires_at` is within 60s of now. If so, refresh first.
-- On any 401 from the API (even if `expires_at` says we're fine), force a refresh and retry the request once.
-- If refresh fails with `invalid_grant` or `expired_token`: clear Keychain, post `.signedOut` to `UsageStore`, popover flips to `SignInView`.
-- If refresh fails with a network error: keep tokens, surface "offline" state, retry on next poll.
+```
+~/Library/Application Support/Claude/config.json
+```
 
-### URL scheme handling
+JSON key `oauth:tokenCache`. Value is base64; decoded bytes start with the ASCII prefix `v10` (3 bytes) followed by AES-128-CBC ciphertext.
 
-`Info.plist` registers `claude-meter://` under `CFBundleURLTypes`. The app's `@main` scene wires `.onOpenURL { url in … }` (or `application(_:open:options:)` via an `NSApplicationDelegateAdaptor`) and forwards to `OAuthClient.handleCallback(url:)`. Only `claude-meter://oauth/callback` is accepted; any other path is rejected.
+## Decryption procedure
 
-Note: `ASWebAuthenticationSession` returns the callback URL directly to the calling code via its completion handler — we don't strictly need URL scheme handling for the OAuth callback itself. The scheme registration exists so that the OS knows about the scheme (some auth servers validate that the redirect URI scheme is registered) and so that, if the user accidentally clicks a `claude-meter://` link from elsewhere, our app handles it gracefully.
+Inputs:
+- `keychainPassword: Data` — UTF-8 bytes of the Keychain entry's password.
+- `cipherBlobBase64: String` — value of `oauth:tokenCache`.
 
-## Failure modes
+Steps:
 
-| Symptom | User-facing message | App action |
-|---------|--------------------|------------|
-| User cancels `ASWebAuthenticationSession` | "Sign-in cancelled" | Return to sign-in view |
-| Anthropic returns OAuth error (`error=…`) | Show `error_description` if present, otherwise the `error` code | Return to sign-in view |
-| Code exchange returns 4xx | "Sign-in failed — please try again" | Return to sign-in view |
-| Code exchange / refresh network failure | "Network error during sign-in" | Return to sign-in view; user retries |
-| Refresh returns `invalid_grant` | "Please sign in again" | Clear Keychain, sign-in view |
-| API returns 401 even after refresh | "Authentication failed — please sign in again" | Clear Keychain, sign-in view |
-| `state` mismatch on callback | "Sign-in error" (do not surface CSRF jargon) | Return to sign-in view |
+1. Base64-decode → `blob`.
+2. Verify `blob.prefix(3) == "v10"`. If not, abort with "unsupported scheme version."
+3. `ciphertext = blob.dropFirst(3)`.
+4. `key = PBKDF2-HMAC-SHA1(password=keychainPassword, salt="saltysalt", iter=1003, keyLen=16)`.
+5. `IV = 16 × 0x20` (ASCII space).
+6. `plaintext = AES-128-CBC-Decrypt(ciphertext, key, IV)`. Strip PKCS#7 padding.
+7. Plaintext is a JSON object. Each key has the form `<client_id>:<some_id>:<audience>:<scopes>`; each value has the shape `{ "token": String, "refreshToken": String, "expiresAt": Int (ms epoch), "subscriptionType"?: String, "rateLimitTier"?: String }`.
+8. Pick the entry whose key contains `user:profile` and whose `expiresAt > now()`. Use its `token` as the bearer.
+
+`CommonCrypto` provides PBKDF2-HMAC-SHA1 (`CCKeyDerivationPBKDF`) and AES-128-CBC (`CCCrypt`). `Security.framework` provides Keychain access. Both are system frameworks.
+
+## Critical implementation rule
+
+**Re-read on every poll. Never cache the decrypted token in memory across HTTP calls.**
+
+Caching would defeat the auto-refresh path: when Claude desktop refreshes the token it writes new bytes to `config.json`, and we want our next poll to pick those up. The decrypt overhead is negligible (microseconds) compared to the network call, so there's no performance reason to cache.
+
+## Failure modes and user-facing messages
+
+| Symptom | Likely cause | Display |
+|---------|--------------|---------|
+| Keychain entry not found | Claude desktop not installed | "Install Claude desktop and sign in." Link to claude.ai/download. |
+| `errSecItemNotFound` for `oauth:tokenCache` JSON key | User installed Claude desktop but never signed in | "Sign in to Claude desktop to enable Claude Meter." |
+| Keychain access denied (`errSecAuthFailed` / user clicked Deny) | First-launch Keychain ACL prompt declined | "Allow Keychain access to read Claude's sign-in. (Open System Settings → Privacy & Security)." With a retry button. |
+| `config.json` missing | Same as above | "Sign in to Claude desktop." |
+| Base64 decode fails / `v10` prefix missing | Storage format changed in a future Claude desktop release | "Claude desktop changed its storage format. Update Claude Meter." |
+| AES decrypt produces invalid PKCS#7 padding | Key/account pair changed (try `Claude Key` fallback first) | Same as above. |
+| API returns 401 | Cached token expired and Claude desktop hasn't refreshed (typically because it isn't running) | "Open Claude desktop to refresh." Resume on next successful poll. |
+
+claude-meter must distinguish these — they imply different user actions.
 
 ## What we never do
 
-- Read other apps' Keychain entries.
-- Read Claude desktop's `Application Support/Claude/` storage.
-- Embed a `client_secret`. PKCE only; native apps cannot keep secrets.
-- Cache tokens anywhere outside Keychain (no `UserDefaults`, no on-disk JSON).
-- Implement device-flow, password grant, or any other OAuth scheme — just Authorization Code + PKCE.
-- Use a third-party OAuth library. `URLSession` + `CryptoKit` (for PKCE/state random + SHA256) is enough.
-
-## Fallback path (if Anthropic does not support third-party OAuth clients)
-
-If, on investigation, Anthropic offers no public OAuth client registration and no documented redirect URI scheme for third-party native apps:
-
-1. **Pause v1.** Do not reuse another app's `client_id`. Do not revert to reading Claude desktop's encrypted storage as a workaround.
-2. **File the question with Anthropic** (developer support, or whatever channel exists). Document the response here.
-3. **If the answer is "no public OAuth, period":** the project is on hold pending API direction. Document the state and stop. We do not silently degrade to a fragile workaround.
+- Modify Claude desktop's Keychain entry, `config.json`, or any of its files.
+- Mint our own OAuth tokens or run an OAuth flow.
+- Register a third-party `client_id` with Anthropic.
+- Reuse another Anthropic-developed app's `client_id` to mint tokens for ourselves.
+- Send Claude desktop's `User-Agent` string. We send our own (`claude-meter/<version> (macOS)`) so any detection on Anthropic's side sees us as ourselves, not as Claude desktop.
+- Cache the decrypted token across polls.
+- Send tokens off-device.
 
 ## Re-verification
 
-When Anthropic ships an OAuth-related change (new `anthropic-beta` header value, deprecation notice, scope changes), update this document and revise the implementation in lockstep.
+When Claude desktop ships a new version, sanity-check:
+
+```sh
+# Keychain entry still where we expect
+security find-generic-password -s "Claude Safe Storage" -a "Claude" -g 2>&1 | head
+
+# oauth:tokenCache key still in config.json
+grep -o '"oauth:[^"]*"' ~/Library/Application\ Support/Claude/config.json
+
+# v10 prefix still in use
+python3 -c "import json,base64; v=json.load(open('$HOME/Library/Application Support/Claude/config.json'))['oauth:tokenCache']; print(base64.b64decode(v)[:8])"
+```
+
+The `utils/probe-token-cache.sh` script does a more thorough sweep — it walks every entry in the cache, decodes the cache key, and tests each token against `/api/oauth/usage`. Run it after any major Claude desktop version bump.
+
+## Policy context (open question)
+
+Anthropic publicly stated in early 2026 that subscription OAuth tokens are intended only for Claude.ai and Claude Code, and using them in other tools "constitutes a violation of the Consumer Terms of Service." The enforcement target was clearly third-party tools that proxied inference via subscription tokens (the "OpenClaw" pattern). Whether the policy applies to a personal read-only metadata utility like claude-meter is unclear in the policy text.
+
+We are reaching out to Anthropic developer support to ask. Possible outcomes:
+- **Sanctioned**: they offer an explicit OK or a proper API key for usage queries → claude-meter ships as designed.
+- **Tolerated**: no formal blessing but no objection → claude-meter ships with a README note that it depends on undocumented behavior.
+- **Refused**: they ask us to stop → claude-meter is shut down. The local-decrypt path is more polite to remove than a third-party OAuth registration would have been.
+
+References (collected during 2026-04-30 research):
+- The Register, *Anthropic clarifies ban on third-party tool access to Claude* (2026-02-20).
+- MindStudio, *What Is the OpenClaw Ban?*
+- claude-code GitHub Issue #28091, *Anthropic disabled OAuth tokens for third-party apps*.
+- Claude Code authentication docs at `code.claude.com/docs/en/authentication`.

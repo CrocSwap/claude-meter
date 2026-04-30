@@ -7,7 +7,6 @@ struct UsagePopover: View {
     let store: UsageStore
     let launchAtLogin: LaunchAtLogin
     let onRefresh: () -> Void
-    let onSignOut: () -> Void
     let onQuit: () -> Void
 
     var body: some View {
@@ -47,8 +46,6 @@ struct UsagePopover: View {
             .font(.caption)
 
             HStack {
-                Button("Sign Out", action: onSignOut)
-                    .buttonStyle(.borderless)
                 Spacer()
                 Button("Quit Claude Meter", action: onQuit)
                     .buttonStyle(.borderless)
@@ -72,20 +69,40 @@ struct UsagePopover: View {
     private var errorMessage: String? {
         guard let err = store.lastError else { return nil }
         switch err {
-        case .unauthorized:
-            return "Authentication failed — please sign in again."
-        case .forbidden:
-            return "Re-authorization required."
-        case .notFound:
-            return "Claude Meter needs an update."
-        case .server(let s):
-            return "Anthropic server error (HTTP \(s)). Retrying…"
-        case .network:
-            return "Offline. Showing last known values."
-        case .decoding:
-            return "Couldn't parse the response. Claude Meter needs an update."
-        case .invalidResponse, .unexpected:
-            return "Unexpected response. Will retry."
+        case .tokenRead(let tokenErr):
+            switch tokenErr {
+            case .keychainItemNotFound, .configFileMissing, .configKeyMissing:
+                return "Open Claude desktop and sign in to enable Claude Meter."
+            case .keychainAccessDenied:
+                return "Allow Keychain access in System Settings → Privacy & Security."
+            case .unsupportedScheme, .base64DecodeFailed, .plaintextNotJSON:
+                return "Claude desktop changed its storage format. Update Claude Meter."
+            case .decryptionFailed:
+                return "Couldn't decrypt Claude desktop's sign-in. Update Claude Meter."
+            case .noUsableToken:
+                return "Open Claude desktop to refresh your sign-in."
+            case .configReadFailed:
+                return "Couldn't read Claude desktop's config file."
+            case .keychainOther:
+                return "Couldn't read Keychain. Try again."
+            }
+        case .api(let apiErr):
+            switch apiErr {
+            case .unauthorized:
+                return "Open Claude desktop to refresh your sign-in."
+            case .forbidden:
+                return "Authorization scope changed — Claude Meter may need an update."
+            case .notFound:
+                return "Claude Meter needs an update."
+            case .server(let s):
+                return "Anthropic server error (HTTP \(s)). Retrying…"
+            case .network:
+                return "Offline. Showing last known values."
+            case .decoding:
+                return "Couldn't parse the response. Claude Meter needs an update."
+            case .invalidResponse, .unexpected:
+                return "Unexpected response. Will retry."
+            }
         }
     }
 }
@@ -98,12 +115,12 @@ struct UsagePopover: View {
         sevenDay: UsageWindow(utilization: 65.0,
                               resetsAt: Date().addingTimeInterval(2 * 86400))
     ))
-    return UsagePopover(store: store, launchAtLogin: LaunchAtLogin(), onRefresh: {}, onSignOut: {}, onQuit: {})
+    return UsagePopover(store: store, launchAtLogin: LaunchAtLogin(), onRefresh: {}, onQuit: {})
 }
 
 #Preview("Loading") {
     let store = UsageStore()
-    return UsagePopover(store: store, launchAtLogin: LaunchAtLogin(), onRefresh: {}, onSignOut: {}, onQuit: {})
+    return UsagePopover(store: store, launchAtLogin: LaunchAtLogin(), onRefresh: {}, onQuit: {})
 }
 
 #Preview("Network error with stale snapshot") {
@@ -114,6 +131,6 @@ struct UsagePopover: View {
         sevenDay: UsageWindow(utilization: 65.0,
                               resetsAt: Date().addingTimeInterval(2 * 86400))
     ), at: Date().addingTimeInterval(-15 * 60))
-    store.recordError(.network(underlying: URLError(.notConnectedToInternet)))
-    return UsagePopover(store: store, launchAtLogin: LaunchAtLogin(), onRefresh: {}, onSignOut: {}, onQuit: {})
+    store.recordError(.api(.network(underlying: URLError(.notConnectedToInternet))))
+    return UsagePopover(store: store, launchAtLogin: LaunchAtLogin(), onRefresh: {}, onQuit: {})
 }

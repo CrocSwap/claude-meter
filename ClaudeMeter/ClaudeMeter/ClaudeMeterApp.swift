@@ -2,27 +2,32 @@ import SwiftUI
 
 @main
 struct ClaudeMeterApp: App {
-    @State private var store = UsageStore()
-    @State private var launchAtLogin = LaunchAtLogin()
-    // Placeholder — replaced with `OAuthClient.isSignedIn` once #5 lands.
-    @State private var isSignedIn: Bool = false
+    @State private var store: UsageStore
+    @State private var launchAtLogin: LaunchAtLogin
+    @State private var poller: UsagePoller
+
+    init() {
+        let store = UsageStore()
+        let poller = UsagePoller(
+            store: store,
+            tokenSource: { try TokenReader.currentToken() }
+        )
+        _store = State(initialValue: store)
+        _launchAtLogin = State(initialValue: LaunchAtLogin())
+        _poller = State(initialValue: poller)
+        Task { await poller.start() }
+    }
 
     var body: some Scene {
         MenuBarExtra {
-            if isSignedIn {
-                UsagePopover(
-                    store: store,
-                    launchAtLogin: launchAtLogin,
-                    onRefresh: refreshNow,
-                    onSignOut: signOut,
-                    onQuit: quit
-                )
-            } else {
-                SignInView(
-                    onSignIn: signIn,
-                    onQuit: quit
-                )
-            }
+            UsagePopover(
+                store: store,
+                launchAtLogin: launchAtLogin,
+                onRefresh: { Task { await poller.refreshNow() } },
+                onQuit: { NSApplication.shared.terminate(nil) }
+            )
+            .onAppear { Task { await poller.setPopoverOpen(true) } }
+            .onDisappear { Task { await poller.setPopoverOpen(false) } }
         } label: {
             MenuBarLabel(
                 snapshot: store.snapshot,
@@ -30,22 +35,5 @@ struct ClaudeMeterApp: App {
             )
         }
         .menuBarExtraStyle(.window)
-    }
-
-    private func signIn() {
-        // Stub: kicked off in task #5 once OAuthClient exists.
-    }
-
-    private func signOut() {
-        store.clear()
-        isSignedIn = false
-    }
-
-    private func refreshNow() {
-        // Stub: forwarded to UsagePoller.refreshNow() once wired.
-    }
-
-    private func quit() {
-        NSApplication.shared.terminate(nil)
     }
 }
