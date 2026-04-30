@@ -25,7 +25,7 @@ These are not negotiable. Push back if a request would violate them.
 - **HTTP:** `URLSession` only. No Alamofire or third-party HTTP libraries.
 - **Keychain:** Direct Security.framework calls. No KeychainAccess or wrappers — the dependency surface stays minimal.
 - **Build:** Xcode project committed to repo. SPM for any (rare) dependencies.
-- **Min macOS:** 13.0 (Ventura). This covers ~95% of active Macs and gives us `MenuBarExtra`.
+- **Min macOS:** 14.0 (Sonoma). Gives us `MenuBarExtra` and the `@Observable` macro for SwiftUI state. Sonoma has been out long enough that it covers a strong majority of active Macs; if a future v1.x needs to drop to 13, the only blocker would be `@Observable` (replaceable with `ObservableObject` + `@Published`).
 
 Do not add dependencies without explicit approval. Every line of third-party code is a future maintenance liability.
 
@@ -97,7 +97,7 @@ If the API returns 401 with a presumably-valid token, retry once after a forced 
 
 Four small services. Views are thin and observe the store.
 
-1. **`UsageStore`** (actor) — holds the latest snapshot, timestamp, and error state. Single source of truth. Observable via `@Published` for SwiftUI.
+1. **`UsageStore`** (`@MainActor @Observable` class) — holds the latest snapshot, timestamp, and error state. Single source of truth. SwiftUI views observe it directly via the Observation macros.
 2. **`UsagePoller`** (actor) — owns the timer, calls `AnthropicAPI`, updates the store. Backs off on errors (exponential, capped at 5 min).
 3. **`OAuthClient`** (actor) — runs the PKCE sign-in flow via `ASWebAuthenticationSession`, exchanges codes for tokens, refreshes expiring tokens. Sole writer to `TokenStore`.
 4. **`TokenStore`** — Keychain CRUD for our own access + refresh tokens. Generic password item under service `dev.claudemeter.oauth`.
