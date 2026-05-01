@@ -13,17 +13,21 @@ struct VesselGauge: View {
     /// `criticalRed` for explicit critical-state rendering.
     var color: Color = .primary
 
-    private let outerWidth: CGFloat = 6
-    private let outerHeight: CGFloat = 14
-    private let innerWidth: CGFloat = 4
-    private let innerInset: CGFloat = 1.5
-    private let cornerRadius: CGFloat = 2.5
-    private let innerCornerRadius: CGFloat = 1.25
+    private let outerWidth: CGFloat = 9
+    private let outerHeight: CGFloat = 16
+    private let innerWidth: CGFloat = 6
+    private let innerInset: CGFloat = 2
+    private let cornerRadius: CGFloat = 3
+    private let innerCornerRadius: CGFloat = 1.5
+    private let strokeWidth: CGFloat = 1.25
+    /// Floor on the rendered inner-fill height when utilization > 0, so a
+    /// non-zero level isn't invisibly thin at low percentages.
+    private let minVisibleFill: CGFloat = 1.75
 
     var body: some View {
         ZStack(alignment: .bottom) {
             RoundedRectangle(cornerRadius: cornerRadius)
-                .strokeBorder(color, lineWidth: 1)
+                .strokeBorder(color, lineWidth: strokeWidth)
 
             RoundedRectangle(cornerRadius: innerCornerRadius)
                 .fill(color)
@@ -34,10 +38,11 @@ struct VesselGauge: View {
     }
 
     private var fillHeight: CGFloat {
-        guard let u = utilization else { return 0 }
+        guard let u = utilization, u > 0 else { return 0 }
         let usable = outerHeight - 2 * innerInset
         let clamped = min(100, max(0, u))
-        return CGFloat(clamped / 100) * usable
+        let raw = CGFloat(clamped / 100) * usable
+        return max(minVisibleFill, raw)
     }
 }
 

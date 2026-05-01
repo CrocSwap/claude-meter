@@ -6,7 +6,16 @@ The bar for promoting any of these into v1.x is: **does this make the gauge more
 
 ---
 
-> Note: predictive reset (originally targeted at v1.1) was promoted into v1. See `docs/metrics.md` for the full pacing/dead-time/EWMA spec.
+## Closed in v1
+
+Items that originally lived here and shipped as part of the initial release:
+
+- **Predictive reset / pacing.** Originally v1.1; promoted into v1. EWMA burn rate, pace ratio, projected dead time / unused capacity, confidence gating. See `docs/metrics.md` for the spec and `Services/Projector.swift` for the implementation.
+- **Three display modes.** `vessel` (vertical pill), `pacing` (speedometer arc + adjacent label), `numeric` (`%`). Switchable from the settings panel; persisted in `AppSettings`.
+- **Monochrome-until-85% color philosophy.** Template-tinted by macOS below the threshold; `criticalRed` above. Per-window override (`terracotta` / `red`) for over-pace dead-time annotations.
+- **Settings panel.** Standard `Settings` scene (⌘,) opened from the popover gear, with display mode, tracked window, annotation toggle, and launch-at-login.
+- **Launch at login.** `LaunchAtLogin.swift` wraps `SMAppService.mainApp`; toggle lives in the settings panel.
+- **Brand identity icon.** Procedurally rendered from `assets/icon.svg` via `tools/render-icon.swift` into the macOS AppIcon set.
 
 ---
 
@@ -41,7 +50,7 @@ The bar for promoting any of these into v1.x is: **does this make the gauge more
 
 ## v1.3 — auto-update
 
-**Problem.** Users have to manually download new releases when the API endpoint inevitably shifts. (Launch-at-login already shipped in v1 — `LaunchAtLogin.swift` wraps `SMAppService.mainApp` and the popover has the toggle.)
+**Problem.** Users have to manually download new releases when the API endpoint inevitably shifts.
 
 **Approach.** [Sparkle 2](https://sparkle-project.org) is the canonical macOS auto-update framework. Adds one dependency, but it's the right call given that this app's value depends on the API integration staying current. Configure for delta updates to keep download size small. Updates check on launch and every 24 hours.
 
