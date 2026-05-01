@@ -2,8 +2,12 @@ import Foundation
 
 /// Drives `UsageStore` with periodic API calls. Owns its task lifecycle.
 ///
-/// Polling cadence follows AGENTS.md: 60s by default, 15s while the popover
-/// is open. On error, exponential backoff with a 5-minute ceiling.
+/// Polling cadence: 60s regardless of popover open/closed. The
+/// `/api/oauth/usage` endpoint rate-limits aggressively (see GitHub issues
+/// anthropics/claude-code#31021, #31637) — pushing harder while the popover
+/// is open just trips the rate limiter sooner. On error, exponential
+/// backoff with a 5-minute ceiling; if the server provides a `Retry-After`
+/// it's honored as a one-shot override.
 ///
 /// The `tokenSource` closure decouples this layer from `OAuthClient` —
 /// at integration time it'll be `oauthClient.currentAccessToken`. For tests
@@ -21,12 +25,16 @@ actor UsagePoller {
     private var task: Task<Void, Never>?
     private var isPopoverOpen: Bool = false
     private var consecutiveFailures: Int = 0
+    /// One-shot override applied to the next sleep, set when the API tells
+    /// us explicitly when to retry (e.g. `Retry-After` on a 429). Cleared
+    /// after it's consumed.
+    private var nextDelayOverride: TimeInterval?
 
     init(
         store: UsageStore,
         tokenSource: @escaping TokenSource,
         normalInterval: TimeInterval = 60,
-        activeInterval: TimeInterval = 15,
+        activeInterval: TimeInterval = 60,
         backoffCeiling: TimeInterval = 300,
         session: URLSession = .shared
     ) {
@@ -63,6 +71,9 @@ actor UsagePoller {
 
     // Exposed for tests; computes the next sleep interval given current state.
     func nextInterval() -> TimeInterval {
+        if let override = nextDelayOverride {
+            return min(override, backoffCeiling)
+        }
         let base = isPopoverOpen ? activeInterval : normalInterval
         guard consecutiveFailures > 0 else { return base }
         let backoff = base * pow(2.0, Double(consecutiveFailures - 1))
@@ -73,6 +84,7 @@ actor UsagePoller {
         while !Task.isCancelled {
             await pollOnce()
             let seconds = nextInterval()
+            nextDelayOverride = nil
             try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
         }
     }
@@ -98,6 +110,11 @@ actor UsagePoller {
         } catch let err as AnthropicAPI.APIError {
             await store.recordError(.api(err))
             consecutiveFailures += 1
+            // Honor server-supplied Retry-After when the rate limiter sets
+            // one; otherwise let exponential backoff take over.
+            if case .rateLimited(let retryAfter) = err, let s = retryAfter, s > 0 {
+                nextDelayOverride = s
+            }
         } catch {
             await store.recordError(.api(.network(underlying: error)))
             consecutiveFailures += 1

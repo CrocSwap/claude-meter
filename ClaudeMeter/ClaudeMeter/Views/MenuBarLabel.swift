@@ -86,22 +86,32 @@ struct MenuBarLabel: View {
         store.lastError != nil && store.snapshot == nil
     }
 
+    private var displaySnapshot: UsageSnapshot? {
+        settings.debug.enabled ? settings.debug.syntheticSnapshot() : store.snapshot
+    }
+
+    private func displayProjection(for window: TrackedWindow) -> Projection? {
+        settings.debug.enabled
+            ? settings.debug.syntheticProjection(for: window)
+            : store.projection(for: window)
+    }
+
     private var trackedWindow: UsageWindow? {
         switch settings.trackedWindow {
-        case .fiveHour: return store.snapshot?.fiveHour
-        case .sevenDay: return store.snapshot?.sevenDay
+        case .fiveHour: return displaySnapshot?.fiveHour
+        case .sevenDay: return displaySnapshot?.sevenDay
         }
     }
 
     private var trackedUtil: Double? { trackedWindow?.utilization }
 
     private var trackedProjection: Projection? {
-        store.projection(for: settings.trackedWindow)
+        displayProjection(for: settings.trackedWindow)
     }
 
     private var nonTrackedProjection: Projection? {
         let other: TrackedWindow = settings.trackedWindow == .fiveHour ? .sevenDay : .fiveHour
-        return store.projection(for: other)
+        return displayProjection(for: other)
     }
 
     private var dotSeverity: WarningDot.Severity {
@@ -148,6 +158,7 @@ struct MenuBarLabel: View {
 
     private var numericText: String {
         guard let u = trackedUtil else { return "—" }
-        return "\(Int(u.rounded()))%"
+        let remaining = max(0, 100 - u)
+        return "\(Int(remaining.rounded()))%"
     }
 }

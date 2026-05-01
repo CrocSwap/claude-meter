@@ -1,18 +1,36 @@
 import Foundation
 
-/// Two-state usage threshold the UI uses to pick fill colors. Below 85% we
-/// render in the system primary color (template-tinted by macOS); at 85% and
-/// above we render in `Color.criticalRed`. There is no amber/medium state —
-/// per `docs/brand.md`, fill level alone carries the warning in the 60–85%
-/// range and color is reserved for "act now."
+/// Three-state usage threshold the popover bars use to pick fill colors:
+///
+/// - `.normal`     — more than 40% capacity remains → `Color.usageGreen`
+/// - `.warning`    — 20–40% capacity remains → `Color.usageYellow`
+/// - `.critical`   — 20% or less remains → `Color.criticalRed`
+///
+/// `init(utilization:)` accepts API-space utilization (0 = fresh, 100 =
+/// locked out). The constants here are in utilization space:
+/// `criticalCutoff = 80` ≡ "≤20% remaining"; `warningCutoff = 60` ≡
+/// "≤40% remaining."
+///
+/// The menu bar uses a binary mapping: `.critical` triggers `criticalRed`,
+/// every other state stays template-tinted. See `MenuBarLabel.gaugeColor`.
 enum Threshold {
-    case neutral, normal, critical
+    case neutral, normal, warning, critical
 
-    /// The boundary is firm at 85%. See `docs/ui.md`.
-    static let criticalCutoff: Double = 85.0
+    /// API-space utilization at which we flip to critical. Equivalent to
+    /// "20% capacity remaining."
+    static let criticalCutoff: Double = 80.0
+    /// API-space utilization at which we flip from healthy to warning.
+    /// Equivalent to "40% capacity remaining."
+    static let warningCutoff: Double = 60.0
 
     init(utilization: Double?) {
         guard let u = utilization else { self = .neutral; return }
-        self = u >= Self.criticalCutoff ? .critical : .normal
+        if u >= Self.criticalCutoff {
+            self = .critical
+        } else if u >= Self.warningCutoff {
+            self = .warning
+        } else {
+            self = .normal
+        }
     }
 }

@@ -12,19 +12,26 @@ struct UsagePopover: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             UsageBar(
-                title: "5 hours",
-                window: store.snapshot?.fiveHour,
-                projection: store.projection(for: .fiveHour),
+                title: "Session",
+                window: displaySnapshot?.fiveHour,
+                projection: displayProjection(for: .fiveHour),
                 showUnderPaceAnnotation: settings.showUnderPaceAnnotation
             )
             UsageBar(
-                title: "7 days",
-                window: store.snapshot?.sevenDay,
-                projection: store.projection(for: .sevenDay),
+                title: "Weekly",
+                window: displaySnapshot?.sevenDay,
+                projection: displayProjection(for: .sevenDay),
                 showUnderPaceAnnotation: settings.showUnderPaceAnnotation
             )
 
-            if let message = errorMessage {
+            Divider()
+
+            VStack(alignment: .leading, spacing: 6) {
+                utilizationRow(label: "Session Token Utilization", window: displaySnapshot?.fiveHour)
+                utilizationRow(label: "Weekly Token Utilization", window: displaySnapshot?.sevenDay)
+            }
+
+            if let message = signInMessage {
                 Text(message)
                     .font(.caption)
                     .foregroundStyle(.red)
@@ -34,9 +41,17 @@ struct UsagePopover: View {
             Divider()
 
             HStack(spacing: 8) {
-                Text(footerText)
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(footerText(now: context.date))
+                        if displayApiUnavailable {
+                            Text("API currently unavailable")
+                                .foregroundStyle(.red)
+                        }
+                    }
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                }
                 Spacer()
                 SettingsLink {
                     Image(systemName: "gearshape")
@@ -64,16 +79,77 @@ struct UsagePopover: View {
         .frame(width: 280)
     }
 
-    private var footerText: String {
-        guard let last = store.lastRefresh else {
-            return store.lastError == nil ? "Loading…" : "Never refreshed"
+    @ViewBuilder
+    private func utilizationRow(label: String, window: UsageWindow?) -> some View {
+        HStack {
+            Text(label)
+                .font(.subheadline)
+                .foregroundStyle(.primary)
+            Spacer()
+            Text(utilizationText(for: window))
+                .font(.subheadline.monospacedDigit())
+                .foregroundStyle(utilizationColor(for: window))
         }
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .short
-        return "Updated \(formatter.localizedString(for: last, relativeTo: Date()))"
     }
 
-    private var errorMessage: String? {
+    private func utilizationText(for window: UsageWindow?) -> String {
+        guard let w = window else { return "—" }
+        return "\(Int(w.utilization.rounded()))%"
+    }
+
+    private func utilizationColor(for window: UsageWindow?) -> Color {
+        guard let w = window else { return .secondary }
+        if w.utilization > 100 { return .criticalRed }
+        if w.utilization >= 85 { return .usageYellow }
+        return .primary
+    }
+
+    /// Snapshot the views should render — debug override if enabled, real
+    /// store data otherwise.
+    private var displaySnapshot: UsageSnapshot? {
+        settings.debug.enabled ? settings.debug.syntheticSnapshot() : store.snapshot
+    }
+
+    private func displayProjection(for window: TrackedWindow) -> Projection? {
+        settings.debug.enabled
+            ? settings.debug.syntheticProjection(for: window)
+            : store.projection(for: window)
+    }
+
+    private func footerText(now: Date) -> String {
+        guard let last = displayLastRefresh else {
+            return store.lastError == nil ? "Loading…" : "Never refreshed"
+        }
+        let elapsed = max(0, now.timeIntervalSince(last))
+        if elapsed < 2 { return "Updated just now" }
+        if elapsed < 60 { return "Updated \(Int(elapsed))s ago" }
+        return "Updated \(DurationFormatter.compact(elapsed)) ago"
+    }
+
+    private var displayLastRefresh: Date? {
+        if settings.debug.enabled {
+            return Date().addingTimeInterval(-settings.debug.minutesSinceUpdate * 60)
+        }
+        return store.lastRefresh
+    }
+
+    /// Whether to render the "API currently unavailable" status line. True
+    /// when the most recent poll failed with an API error (rate limit,
+    /// network, server, etc.) and we still have a cached snapshot to show,
+    /// or when debug is forcing the unavailable state.
+    private var displayApiUnavailable: Bool {
+        if settings.debug.enabled { return settings.debug.apiUnavailable }
+        guard case .api = store.lastError else { return false }
+        return displaySnapshot != nil
+    }
+
+    /// Inline, actionable error shown above the divider. Reserved for
+    /// sign-in problems and a few API errors that *require* user action
+    /// (unauthorized, scope mismatch, etc.). Generic API failures
+    /// (rate limit, network, 5xx) surface in the footer's "API currently
+    /// unavailable" line instead, since the cached snapshot is still
+    /// showing useful data and the user has nothing to do but wait.
+    private var signInMessage: String? {
         guard let err = store.lastError else { return nil }
         switch err {
         case .tokenRead(let tokenErr):
@@ -99,16 +175,10 @@ struct UsagePopover: View {
                 return "Open Claude desktop to refresh your sign-in."
             case .forbidden:
                 return "Authorization scope changed — Claude Meter may need an update."
-            case .notFound:
+            case .notFound, .decoding:
                 return "Claude Meter needs an update."
-            case .server(let s):
-                return "Anthropic server error (HTTP \(s)). Retrying…"
-            case .network:
-                return "Offline. Showing last known values."
-            case .decoding:
-                return "Couldn't parse the response. Claude Meter needs an update."
-            case .invalidResponse, .unexpected:
-                return "Unexpected response. Will retry."
+            case .rateLimited, .server, .network, .invalidResponse, .unexpected:
+                return nil
             }
         }
     }

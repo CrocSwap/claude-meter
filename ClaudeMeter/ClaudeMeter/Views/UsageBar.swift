@@ -1,10 +1,11 @@
 import SwiftUI
 
-/// Reusable horizontal progress bar for one usage window. Renders monochrome
-/// (system primary color, template-tinted by macOS) below 85% utilization
-/// and `Color.criticalRed` at/above. Fill level alone carries the warning in
-/// the 60–85% range — see `docs/brand.md`. Subtitle shows the percentage and
-/// reset countdown, with an optional projection annotation underneath.
+/// Reusable horizontal bar for one usage window, displayed in *remaining*
+/// terms (battery-style): the bar shrinks as the user burns through the
+/// window. Color reflects how much room is left — green above 40%, yellow
+/// 20–40%, red at or below 20%. See `docs/brand.md`. Subtitle shows
+/// "X% left" plus the reset countdown, with an optional projection
+/// annotation underneath.
 struct UsageBar: View {
     let title: String
     let window: UsageWindow?
@@ -47,18 +48,20 @@ struct UsageBar: View {
 
     private var fillFraction: Double {
         guard let u = window?.utilization else { return 0 }
-        return min(1.0, u / 100)
+        let remaining = 100 - u
+        return min(1.0, max(0, remaining / 100))
     }
 
     private var percentText: String {
         guard let u = window?.utilization else { return "—" }
-        return String(format: "%.0f%%", u)
+        return String(format: "%.0f%% left", max(0, 100 - u))
     }
 
     private var fillColor: Color {
         switch Threshold(utilization: window?.utilization) {
         case .critical: return .criticalRed
-        case .normal: return .primary
+        case .warning: return .usageYellow
+        case .normal: return .usageGreen
         case .neutral: return .clear
         }
     }
@@ -69,7 +72,7 @@ struct UsageBar: View {
         }
         let interval = resetsAt.timeIntervalSince(now)
         if interval <= 0 { return "resets now" }
-        return "resets in \(DurationFormatter.compact(interval))"
+        return "resets in \(DurationFormatter.verbose(interval))"
     }
 
     /// The annotation line beneath the reset countdown — projected dead
@@ -83,7 +86,7 @@ struct UsageBar: View {
         case .onPace:
             return nil
         case .overPace(let deadTime):
-            return "locked out \(approx)\(DurationFormatter.compact(deadTime)) before reset"
+            return "locked out \(approx)\(DurationFormatter.verbose(deadTime)) before reset"
         case .underPace(let unusedFraction, _):
             guard showUnderPaceAnnotation else { return nil }
             let pct = Int((unusedFraction * 100).rounded())

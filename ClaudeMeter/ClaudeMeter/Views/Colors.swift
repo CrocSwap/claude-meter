@@ -21,4 +21,22 @@ extension Color {
             ? NSColor(red: 0xC8 / 255, green: 0x65 / 255, blue: 0x4D / 255, alpha: 1)
             : NSColor(red: 0xB5 / 255, green: 0x56 / 255, blue: 0x3D / 255, alpha: 1)
     })
+
+    /// Healthy "you've got headroom" green for the popover usage bars.
+    /// Tracks Apple's `systemGreen` so it feels native against macOS chrome.
+    static let usageGreen = Color(nsColor: NSColor(name: nil) { appearance in
+        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        return isDark
+            ? NSColor(red: 0x30 / 255, green: 0xD1 / 255, blue: 0x58 / 255, alpha: 1)
+            : NSColor(red: 0x34 / 255, green: 0xC7 / 255, blue: 0x59 / 255, alpha: 1)
+    })
+
+    /// Mid-range "starting to thin out" yellow for the popover usage bars,
+    /// shown in the 20–40% remaining band. Tracks Apple's `systemYellow`.
+    static let usageYellow = Color(nsColor: NSColor(name: nil) { appearance in
+        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        return isDark
+            ? NSColor(red: 0xFF / 255, green: 0xD6 / 255, blue: 0x0A / 255, alpha: 1)
+            : NSColor(red: 0xFF / 255, green: 0xCC / 255, blue: 0x00 / 255, alpha: 1)
+    })
 }

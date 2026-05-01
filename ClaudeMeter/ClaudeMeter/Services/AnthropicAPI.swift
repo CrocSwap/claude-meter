@@ -35,6 +35,10 @@ enum AnthropicAPI {
         case forbidden(body: String)
         /// 404 — endpoint removed or moved. claude-meter likely needs an update.
         case notFound
+        /// 429 — rate limited. `retryAfter` is parsed from the `Retry-After`
+        /// header in seconds when the server provides it, else nil. The
+        /// poller's exponential backoff will kick in either way.
+        case rateLimited(retryAfter: TimeInterval?)
         /// 5xx — Anthropic-side issue. Caller should back off and retry later.
         case server(status: Int)
         /// HTTP succeeded but body didn't decode to UsageSnapshot.
@@ -45,6 +49,23 @@ enum AnthropicAPI {
         case network(underlying: any Error)
         /// URLResponse wasn't an HTTPURLResponse.
         case invalidResponse
+    }
+
+    /// Parses the `Retry-After` HTTP header, which can be either an integer
+    /// number of seconds or an HTTP date. Returns nil if absent or invalid.
+    private static func retryAfter(from response: HTTPURLResponse) -> TimeInterval? {
+        guard let raw = response.value(forHTTPHeaderField: "Retry-After") else { return nil }
+        if let seconds = TimeInterval(raw.trimmingCharacters(in: .whitespaces)) {
+            return max(0, seconds)
+        }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "GMT")
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+        if let date = formatter.date(from: raw) {
+            return max(0, date.timeIntervalSinceNow)
+        }
+        return nil
     }
 
     static func fetchUsage(token: String, session: URLSession = .shared) async throws -> UsageSnapshot {
@@ -81,6 +102,8 @@ enum AnthropicAPI {
             throw APIError.forbidden(body: String(decoding: data, as: UTF8.self))
         case 404:
             throw APIError.notFound
+        case 429:
+            throw APIError.rateLimited(retryAfter: retryAfter(from: http))
         case 500..<600:
             throw APIError.server(status: http.statusCode)
         default:

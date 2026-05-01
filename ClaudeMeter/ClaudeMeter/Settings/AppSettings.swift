@@ -22,6 +22,11 @@ final class AppSettings {
         didSet { defaults.set(showUnderPaceAnnotation, forKey: Keys.showUnderPaceAnnotation) }
     }
 
+    /// Hidden developer overrides — see `DebugSettings`. Only the settings
+    /// panel (gated by ⌥⌘⇧D) reads/writes this; runtime views just check
+    /// `debug.enabled` and substitute synthesized values when true.
+    let debug: DebugSettings
+
     private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
@@ -38,6 +43,8 @@ final class AppSettings {
         } else {
             self.showUnderPaceAnnotation = true
         }
+
+        self.debug = DebugSettings(defaults: defaults)
     }
 
     private enum Keys {

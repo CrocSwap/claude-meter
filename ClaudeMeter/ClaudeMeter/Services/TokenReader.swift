@@ -4,9 +4,17 @@ import CommonCrypto
 
 /// Reads + decrypts Claude desktop's locally-cached OAuth token.
 ///
-/// Stateless. **Re-runs on every poll**; never cache the decrypted token
-/// in memory across calls — Claude desktop refreshes the token on disk in
-/// the background and we want to pick up the freshest value each time.
+/// **What's cached and what isn't:**
+/// - The encrypted blob from `config.json` is re-read on every call so we
+///   pick up tokens Claude desktop rotates on disk.
+/// - The decrypted access token is **not** cached (it expires; rotation
+///   happens via the disk blob).
+/// - The Chromium "Safe Storage" master key from the macOS keychain **is**
+///   cached for the process lifetime. That key is set once when Claude
+///   desktop installs and doesn't rotate alongside tokens, so reading it
+///   on every poll just spams the keychain ACL prompt for no benefit. If
+///   decryption ever fails (e.g., Claude desktop reinstalled), we drop
+///   the cache and re-read the key once.
 ///
 /// See `docs/auth.md` for the full protocol and policy context.
 enum TokenReader {
@@ -41,10 +49,47 @@ enum TokenReader {
     /// The full happy path. Throws a typed `ReadError` on any failure so
     /// callers can pick the right user-facing message.
     nonisolated static func currentToken(now: Date = Date()) throws -> String {
-        let password = try readKeychainKey()
         let blob = try readEncryptedBlob()
+
+        if let cached = cachedKeychainKey() {
+            do {
+                let plaintext = try decrypt(blob: blob, password: cached)
+                return try selectToken(plaintextJSON: plaintext, now: now)
+            } catch ReadError.decryptionFailed {
+                // Cached master key stopped working — Claude desktop was
+                // reinstalled or rotated its key. Drop the cache, prompt
+                // the keychain once, and retry below.
+                invalidateKeychainKeyCache()
+            }
+        }
+
+        let password = try readKeychainKey()
+        storeKeychainKey(password)
         let plaintext = try decrypt(blob: blob, password: password)
         return try selectToken(plaintextJSON: plaintext, now: now)
+    }
+
+    // MARK: - Keychain key cache
+
+    nonisolated(unsafe) private static var _cachedKeychainKey: Data?
+    nonisolated private static let cacheLock = NSLock()
+
+    nonisolated private static func cachedKeychainKey() -> Data? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        return _cachedKeychainKey
+    }
+
+    nonisolated private static func storeKeychainKey(_ key: Data) {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        _cachedKeychainKey = key
+    }
+
+    nonisolated private static func invalidateKeychainKeyCache() {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        _cachedKeychainKey = nil
     }
 
     // MARK: - I/O steps (not unit tested — exercised end-to-end at runtime)

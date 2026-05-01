@@ -27,8 +27,28 @@ struct PacingArc: View {
     private let foreLineWidth: CGFloat = 2
     /// Visual cap on the dead-time arc (3 days = full quarter sweep).
     private let deadTimeVisualCap: TimeInterval = 3 * 86_400
+    /// Arc's own drawing canvas, before the brand mark is overlaid.
+    private let arcWidth: CGFloat = 22
+    private let arcHeight: CGFloat = 14
+    /// Brand splatter mark, matching the size and weight used on `VesselGauge`.
+    private let markSize: CGFloat = 8
 
     var body: some View {
+        ZStack(alignment: .topLeading) {
+            arcCanvas
+                .frame(width: arcWidth, height: arcHeight)
+
+            ClaudeMark(color: color, size: markSize, rayWidth: 1.2)
+                .offset(x: arcWidth - markSize / 2, y: arcHeight - markSize / 2)
+        }
+        .frame(
+            width: arcWidth + markSize / 2,
+            height: arcHeight + markSize / 2,
+            alignment: .topLeading
+        )
+    }
+
+    private var arcCanvas: some View {
         Canvas { context, size in
             let center = CGPoint(x: size.width / 2, y: size.height - 1)
 
@@ -87,7 +107,6 @@ struct PacingArc: View {
             )
             context.fill(Path(ellipseIn: dotRect), with: .color(color))
         }
-        .frame(width: 22, height: 14)
     }
 
     private var overPaceDeadTime: TimeInterval? {

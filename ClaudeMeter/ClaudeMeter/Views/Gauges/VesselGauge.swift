@@ -1,12 +1,14 @@
 import SwiftUI
 
-/// Vertical pill gauge that fills bottom-up with utilization. Used directly
-/// in popover previews and as the visual content `MenuBarLabel` snapshots
-/// into an NSImage. The body is pure SwiftUI shapes — no NSImage wrapping
-/// here; that's `MenuBarLabel`'s job for the menu-bar surface.
+/// Vertical pill gauge that displays *remaining* capacity (battery-style):
+/// fills bottom-up with `100 - utilization`, so a fresh window is full and
+/// the pill drains as the user burns through tokens. The `utilization`
+/// input is in API-space (0 = fresh, 100 = locked out); inversion happens
+/// here in the display layer. Used directly in popover previews and as the
+/// visual content `MenuBarLabel` snapshots into an NSImage.
 ///
 /// See `docs/ui.md` for geometry and `docs/brand.md` for the threshold rule
-/// (monochrome below 85%, `criticalRed` at/above).
+/// (monochrome until ≤15% remaining, `criticalRed` below).
 struct VesselGauge: View {
     let utilization: Double?
     /// Drawing color. The caller picks black for template rendering or
@@ -20,28 +22,49 @@ struct VesselGauge: View {
     private let cornerRadius: CGFloat = 3
     private let innerCornerRadius: CGFloat = 1.5
     private let strokeWidth: CGFloat = 1.25
-    /// Floor on the rendered inner-fill height when utilization > 0, so a
-    /// non-zero level isn't invisibly thin at low percentages.
+    /// Floor on the rendered inner-fill height when remaining > 0, so a
+    /// nearly-empty pill doesn't look identical to a fully-empty one.
     private let minVisibleFill: CGFloat = 1.75
+    /// Brand splatter overlaid at the bottom-right corner so the gauge
+    /// reads as "battery for Claude" rather than a generic level indicator.
+    private let markSize: CGFloat = 8
+    /// How far the mark's center sits beyond the pill's bottom-right
+    /// corner. Keeps the mark mostly outside the fill area while still
+    /// feeling attached.
+    private let markPokeOut: CGFloat = 1.5
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            RoundedRectangle(cornerRadius: cornerRadius)
-                .strokeBorder(color, lineWidth: strokeWidth)
+        ZStack(alignment: .topLeading) {
+            ZStack(alignment: .bottom) {
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .strokeBorder(color, lineWidth: strokeWidth)
 
-            RoundedRectangle(cornerRadius: innerCornerRadius)
-                .fill(color)
-                .frame(width: innerWidth, height: fillHeight)
-                .padding(.bottom, innerInset)
+                RoundedRectangle(cornerRadius: innerCornerRadius)
+                    .fill(color)
+                    .frame(width: innerWidth, height: fillHeight)
+                    .padding(.bottom, innerInset)
+            }
+            .frame(width: outerWidth, height: outerHeight)
+
+            ClaudeMark(color: color, size: markSize, rayWidth: 1.2)
+                .offset(
+                    x: outerWidth - markSize / 2 + markPokeOut,
+                    y: outerHeight - markSize / 2 + markPokeOut
+                )
         }
-        .frame(width: outerWidth, height: outerHeight)
+        .frame(
+            width: outerWidth + markSize / 2 + markPokeOut,
+            height: outerHeight + markSize / 2 + markPokeOut,
+            alignment: .topLeading
+        )
     }
 
     private var fillHeight: CGFloat {
-        guard let u = utilization, u > 0 else { return 0 }
+        guard let u = utilization else { return 0 }
+        let remaining = 100 - min(100, max(0, u))
+        if remaining <= 0 { return 0 }
         let usable = outerHeight - 2 * innerInset
-        let clamped = min(100, max(0, u))
-        let raw = CGFloat(clamped / 100) * usable
+        let raw = CGFloat(remaining / 100) * usable
         return max(minVisibleFill, raw)
     }
 }

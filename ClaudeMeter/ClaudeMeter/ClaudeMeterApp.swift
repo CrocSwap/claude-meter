@@ -36,7 +36,7 @@ struct ClaudeMeterApp: App {
         .menuBarExtraStyle(.window)
 
         Settings {
-            SettingsView(settings: settings, launchAtLogin: launchAtLogin)
+            SettingsView(settings: settings, debug: settings.debug, launchAtLogin: launchAtLogin)
         }
     }
 }
