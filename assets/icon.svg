@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Claude Meter app icon — first pass, per docs/brand.md.
+
+  - Square 1024×1024 canvas, terracotta background.
+  - Cream vertical pill, ~32% wide and ~70% tall, vertically centered.
+  - Lower 50% of the pill filled with deep terracotta, flat horizontal boundary
+    at the pill's vertical midpoint (y = 512, the canvas center).
+  - The squircle here uses a plain rounded rectangle (rx = 22% × 1024 = 225)
+    as a starting approximation. Final asset should re-cut the corner using
+    Apple's superellipse template before export to .icns.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <clipPath id="pill">
+      <rect x="348" y="152" width="328" height="720" rx="164" ry="164"/>
+    </clipPath>
+  </defs>
+
+  <!-- Terracotta squircle background -->
+  <rect x="0" y="0" width="1024" height="1024" rx="225" ry="225" fill="#B5563D"/>
+
+  <!-- Cream vessel pill -->
+  <rect x="348" y="152" width="328" height="720" rx="164" ry="164" fill="#F4E8DD"/>
+
+  <!-- Deep terracotta fill, lower 50% of pill, clipped to pill shape -->
+  <rect x="348" y="512" width="328" height="360" fill="#8A3F2C" clip-path="url(#pill)"/>
+</svg>
