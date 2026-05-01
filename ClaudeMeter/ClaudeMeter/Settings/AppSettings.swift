@@ -40,6 +40,10 @@ final class AppSettings {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
 
+        for key in Keys.orphans {
+            defaults.removeObject(forKey: key)
+        }
+
         let usageStored = defaults.object(forKey: Keys.showUsageInMenuBar) != nil
             ? defaults.bool(forKey: Keys.showUsageInMenuBar)
             : true
@@ -72,5 +76,14 @@ final class AppSettings {
         static let showPacingInMenuBar = "showPacingInMenuBar"
         static let showPercentInMenuBar = "showPercentInMenuBar"
         static let trackedWindow = "trackedWindow"
+
+        /// Keys written by older builds that no current setting reads. Cleared
+        /// on every launch so users upgrading from prior versions don't carry
+        /// the cruft forever. `removeObject` is a no-op when the key is
+        /// already absent, so leaving this list in place indefinitely is fine.
+        static let orphans = [
+            "displayMode",              // pre-granular-toggles display-mode picker
+            "showUnderPaceAnnotation",  // pre-radial-gauge popover annotation toggle
+        ]
     }
 }

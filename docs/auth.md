@@ -59,9 +59,22 @@ Steps:
 
 ## Critical implementation rule
 
-**Re-read on every poll. Never cache the decrypted token in memory across HTTP calls.**
+**Re-read the encrypted blob on every poll. Never cache the decrypted access token across HTTP calls.**
 
-Caching would defeat the auto-refresh path: when Claude desktop refreshes the token it writes new bytes to `config.json`, and we want our next poll to pick those up. The decrypt overhead is negligible (microseconds) compared to the network call, so there's no performance reason to cache.
+Caching the decrypted token would defeat the auto-refresh path: when Claude desktop refreshes the token it writes new bytes to `config.json`, and we want our next poll to pick those up. The decrypt overhead is negligible (microseconds) compared to the network call, so there's no performance reason to cache.
+
+## What we *do* cache: the Safe Storage master key
+
+The PBKDF2 input — Claude desktop's Safe Storage password from its keychain item — is cached in two layers so that the cross-app keychain ACL prompt fires only on first install:
+
+1. **In-memory** for the process lifetime (`_cachedKeychainKey` in `TokenReader`).
+2. **Persistently in our own keychain item** under service `dev.claudemeter`, account `claude-safe-storage`, with `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` so it never iCloud-syncs.
+
+The lookup order on each poll is in-memory → our keychain → Claude desktop's keychain. Reading our own item is silent (our app's signing identity is on its ACL by default). Reading Claude desktop's item is what triggers the macOS ACL prompts the first time.
+
+The Safe Storage password is the same secret we'd be prompted to read from Claude desktop's keychain anyway — both items live on the same machine, encrypted by the same login keychain master key, so duplicating it under our own ACL doesn't change the security posture.
+
+If decryption with either cached key fails (Claude desktop rotated or was reinstalled), the corresponding layer is invalidated and we fall through to the next, which prompts again — same one-time first-install experience.
 
 ## Failure modes and user-facing messages
 
@@ -84,8 +97,8 @@ claude-meter must distinguish these — they imply different user actions.
 - Register a third-party `client_id` with Anthropic.
 - Reuse another Anthropic-developed app's `client_id` to mint tokens for ourselves.
 - Send Claude desktop's `User-Agent` string. We send our own (`claude-meter/<version> (macOS)`) so any detection on Anthropic's side sees us as ourselves, not as Claude desktop.
-- Cache the decrypted token across polls.
-- Send tokens off-device.
+- Cache the decrypted access token across polls.
+- Send tokens off-device. (The persistent Safe Storage key cache stays on-device — `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`.)
 
 ## Re-verification
 

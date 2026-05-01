@@ -1,18 +1,17 @@
 import Foundation
 
-/// Three-state usage threshold the popover bars use to pick fill colors:
+/// Four-state usage threshold the popover bars use to pick fill colors:
 ///
+/// - `.neutral`    — no data (utilization is `nil`) → `Color.clear`
 /// - `.normal`     — more than 40% capacity remains → `Color.usageGreen`
 /// - `.warning`    — 20–40% capacity remains → `Color.usageYellow`
 /// - `.critical`   — 20% or less remains → `Color.criticalRed`
 ///
 /// `init(utilization:)` accepts API-space utilization (0 = fresh, 100 =
-/// locked out). The constants here are in utilization space:
-/// `criticalCutoff = 80` ≡ "≤20% remaining"; `warningCutoff = 60` ≡
-/// "≤40% remaining."
-///
-/// The menu bar uses a binary mapping: `.critical` triggers `criticalRed`,
-/// every other state stays template-tinted. See `MenuBarLabel.gaugeColor`.
+/// locked out). A `nil` input becomes `.neutral` so the bar renders an
+/// empty track instead of a misleading "fresh" green fill. The numeric
+/// constants are in utilization space: `criticalCutoff = 80` ≡ "≤20%
+/// remaining"; `warningCutoff = 60` ≡ "≤40% remaining."
 enum Threshold {
     case neutral, normal, warning, critical
 

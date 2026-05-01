@@ -85,6 +85,9 @@ struct SettingsView: View {
                     Toggle("Simulate API unavailable", isOn: $debug.apiUnavailable)
                         .toggleStyle(.switch)
 
+                    Toggle("Hide DEBUG MODE banner (for screenshots)", isOn: $debug.hideBanner)
+                        .toggleStyle(.switch)
+
                     HStack {
                         Text("Last updated")
                             .frame(width: 110, alignment: .leading)

@@ -54,6 +54,13 @@ final class DebugSettings {
         didSet { defaults.set(apiUnavailable, forKey: Keys.apiUnavailable) }
     }
 
+    /// Suppress the yellow "DEBUG MODE" capsule at the top of the popover
+    /// even when overrides are active. Lets the popover capture cleanly for
+    /// screenshots while still using synthesized values.
+    var hideBanner: Bool {
+        didSet { defaults.set(hideBanner, forKey: Keys.hideBanner) }
+    }
+
     /// Minutes since the last successful poll, fed into the popover's
     /// "Updated X ago" footer so you can preview stale-data styling.
     var minutesSinceUpdate: Double {
@@ -77,6 +84,7 @@ final class DebugSettings {
         self.sevenDayOverPaceHours = Self.read(defaults, key: Keys.sevenDayOverPaceHours, fallback: 24)
         self.sevenDayUnusedFraction = Self.read(defaults, key: Keys.sevenDayUnusedFraction, fallback: 0.3)
         self.apiUnavailable = defaults.bool(forKey: Keys.apiUnavailable)
+        self.hideBanner = defaults.bool(forKey: Keys.hideBanner)
         self.minutesSinceUpdate = Self.read(defaults, key: Keys.minutesSinceUpdate, fallback: 0)
     }
 
@@ -170,6 +178,7 @@ final class DebugSettings {
         static let sevenDayOverPaceHours = "debug.sevenDay.overPaceHours"
         static let sevenDayUnusedFraction = "debug.sevenDay.unusedFraction"
         static let apiUnavailable = "debug.apiUnavailable"
+        static let hideBanner = "debug.hideBanner"
         static let minutesSinceUpdate = "debug.minutesSinceUpdate"
     }
 }

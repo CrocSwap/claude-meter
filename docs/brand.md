@@ -44,11 +44,16 @@ The full palette is small. Six colors, plus their dark-mode variants where appli
 | **Terracotta** (primary accent) | `#B5563D` | `#C8654D` | Marketing surfaces; warning dot; pacing-mode dead-time arc; app icon background |
 | **Cream** (neutral surface) | `#F4E8DD` | `#F4E8DD` | App icon vessel |
 | **Deep terracotta** (icon depth) | `#8A3F2C` | `#8A3F2C` | App icon vessel fill |
-| **Critical red** | `#D63838` | `#E85555` | Gauge color when over 85%; dead-time over 1 day; over-utilization text |
+| **Critical red** | `#D63838` | `#E85555` | Menu-bar gauge color when pace ratio exceeds 110%; popover bar fill when ≤20% capacity remains; popover radial-gauge red zone (110–150%); pacing-status burnout line |
+| **Usage green** | `#34C759` | `#30D158` | Popover bar fill when >40% capacity remains; popover radial-gauge under-utilized zone (<85% pace) |
+| **Usage yellow** | `#FFCC00` | `#FFD60A` | Popover bar fill when 20–40% capacity remains |
+| **Pacing amber** | `#D97706` | `#F59E0B` | Popover radial-gauge on-target zone (85–110% pace) |
 | Standard label | system | system | All other text in the app |
 | Standard fill | system | system | Bar tracks, default gauge fill |
 
-**The app itself uses almost no color.** The gauge is monochrome (template image) under 85%, red above. The popover uses system colors for everything except the threshold red and the projection annotation colors. Terracotta does **not** appear in the running app except as the small warning dot.
+**The menu bar gauge uses minimal color.** It renders monochrome (auto-tinted to match the system label color) until the tracked window's pace ratio crosses 110%, at which point both the vessel and the pacing arc flip to critical red. The non-tracked window's status surfaces as a small terracotta or red dot above the gauge.
+
+**The popover uses more color** because it has the room: green/yellow/red usage bars (40%/20% remaining cutoffs) and a green/amber/red radial pacing dial (85%/110% pace cutoffs). Terracotta only appears in the running app as the menu-bar warning dot.
 
 **Marketing surfaces use terracotta heavily.** Repo header, social preview card, README accent, future website if any.
 
@@ -86,7 +91,7 @@ A vessel — cream pill on a terracotta field, with a deep terracotta fill at 50
 
 ## Menu bar glyph
 
-The menu bar gauge is **not the app icon**. It is a programmatically rendered template image (see `docs/ui.md` for full geometry). It is monochrome under 85% utilization, red above. It does not contain terracotta, cream, or any color from the brand palette beyond the critical red — it is a system UI element first and a brand surface a distant second.
+The menu bar gauge is **not the app icon**. It is a programmatically composited SwiftUI view snapshotted into an `NSImage` on every store update (see `docs/ui.md` for full geometry). The gauge body draws in the system label color until the tracked window's pace ratio crosses 110%, at which point it flips to critical red. The non-tracked window's projected severity surfaces as a small dot in the upper-right — terracotta from 110–130% pace, red beyond. No cream, no deep terracotta, no other brand color appears in the menu bar — it is a system UI element first and a brand surface a distant second.
 
 Resist any urge to bring the icon's vessel shape into the menu bar. The icon is the *project's* identity; the gauge is the *app's* function. They are different surfaces with different jobs.
 

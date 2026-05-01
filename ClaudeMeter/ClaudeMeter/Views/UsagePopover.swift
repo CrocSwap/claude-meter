@@ -11,7 +11,7 @@ struct UsagePopover: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if settings.debug.enabled {
+            if settings.debug.enabled && !settings.debug.hideBanner {
                 Text("DEBUG MODE")
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(.black)
@@ -300,7 +300,7 @@ struct UsagePopover: View {
             case .burnout(let label, let lockoutIn, let dead):
                 let lock = DurationFormatter.coarse(lockoutIn)
                 let deadStr = DurationFormatter.coarse(dead)
-                return "⚠️ \(label) limits hitting in \(lock).\nWill lose \(deadStr) of subscription access"
+                return "\(label) limits hitting in \(lock).\nWill lose \(deadStr) of subscription access"
             }
         }
 

@@ -15,131 +15,99 @@ These are stored in `UsageSnapshot` and updated on every successful poll.
 
 ## Reset countdown formatting
 
-For both windows, the time-until-reset is shown to the user. Format depends on magnitude:
+The popover renders durations through `DurationFormatter`. Three variants exist; reset countdowns use `verbose`, the burnout-line "limits hitting in X" uses `coarse`, and any tight surface that needs the durations packed tight uses `compact`.
 
-- **Under 1 hour:** `47m`
-- **1 to 48 hours:** `HH:mm` (e.g. `3:14`, `26:08`)
-- **Over 48 hours:** `Xd` rounded to one decimal (e.g. `3.2d`)
+| Variant | Under 1h | 1–48h | Over 48h |
+|---|---|---|---|
+| `compact` | `47m` | `3h`, `3h 14m` | `2d`, `2d 7h` |
+| `verbose` | `47 minutes` | `3 hours`, `3 hours, 14 minutes` | `2 days`, `2 days, 7 hours` |
+| `coarse` | `47 minutes` | `3 hours` (rounded) | `2 days` (rounded) |
 
-The threshold for switching units is firm: do not show `0:47` when `47m` would do, and do not show `72h` when `3d` would do. Different units for different magnitudes is more readable than one consistent unit at all times.
+Unit boundaries are firm: do not show `0:47` when `47m` would do, do not show `72h` when `3d` would do. Values are always whole numbers — no fractional days.
 
 ## The projection — pace ratio and dead time
 
-A single derived metric per window: **pace ratio**. Calculated as:
+`Projector.project(window:windowDuration:now:)` is a pure function that takes one `UsageWindow` plus the window's total duration (5h or 7d) and returns either a `Projection` or `nil`. The math is deliberately simple — single-snapshot linear extrapolation, no sample history:
 
 ```
-expected_utilization = elapsed_in_window / total_window_length
-pace_ratio = current_utilization / expected_utilization
+elapsed              = windowDuration − (resetsAt − now)
+expected_utilization = (elapsed / windowDuration) × 100
+pace_ratio           = current_utilization / expected_utilization
+burn_rate_per_sec    = current_utilization / elapsed
+projected_at_reset   = current_utilization + burn_rate_per_sec × (resetsAt − now)
 ```
 
-Below 1.0 means under pace (using subscription slower than would consume full allowance by reset). Above 1.0 means over pace (will exceed allowance before reset).
+A pace ratio below 1.0 means under pace (using the subscription slower than would consume the full allowance by reset). Above 1.0 means over pace (will exceed allowance before reset).
 
-### Below 100% — express as pace ratio
+The trade-off: bursty usage will over-project early in the window and under-project after the burst, but the function has no state and produces a value from poll #1. An EWMA smoothing layer was considered and dropped — `docs/backlog.md` notes the rationale.
 
-Display the ratio as a percentage of expected. "75% pace" means burning at three-quarters the rate that would consume your full allowance. The user reads this as "I have headroom."
+`Projector` returns `nil` whenever the inputs can't yield a meaningful pace ratio:
+- `utilization == 0` (nothing to extrapolate from)
+- `resetsAt` is missing
+- The window is past its reset (`secondsUntilReset ≤ 0`)
+- Zero elapsed time (poll happened before the window technically started)
 
-### Exactly 100% — express as "on pace"
+The popover's radial gauges and status sentence both treat `nil` as "no projection available" and hide accordingly.
 
-A small band around 1.0 (say, 0.95–1.05) collapses to "on pace" rather than showing a flickering exact ratio. Reading "98% pace" then "102% pace" then "99% pace" as the EWMA wobbles around the boundary is more anxiety than information.
+## On-pace band, dead time, and unused capacity
 
-### Above 100% — express as projected dead time
+`Projector` classifies the projection into one of three outcomes:
 
-Above the on-pace band, switch units entirely. The user no longer cares about the ratio; they care about consequences. Compute:
-
+```swift
+enum Outcome {
+    case onPace
+    case overPace(deadTime: TimeInterval)
+    case underPace(unusedFraction: Double, unusedTime: TimeInterval)
+}
 ```
-hours_until_full = (1.0 - current_utilization) / current_burn_rate_per_hour
-hours_until_reset = (reset_time - now) in hours
-projected_dead_time = max(0, hours_until_reset - hours_until_full)
-```
 
-Format dead time using the same convention as the reset countdown: minutes/hours/days based on magnitude.
+The boundary is on **projected end-of-window utilization**, not pace ratio:
 
-## Burn rate calculation — EWMA
+- `|projected_at_reset − 100| < onPaceBand` (5 percentage points) → `.onPace`
+- `projected_at_reset ≥ 100` → `.overPace(deadTime)` where `deadTime = max(0, secondsUntilReset − secondsUntilFull)` and `secondsUntilFull = (100 − util) / burn_rate_per_sec`
+- otherwise → `.underPace(unusedFraction, unusedTime)` where `unusedFraction = (100 − projected_at_reset) / 100` and `unusedTime` is the equivalent runway in seconds at the current burn rate
 
-Burn rate is noisy. A user who just finished a heavy task spikes; an idle user looks like a non-user. Smooth aggressively before projecting.
+The popover renders these directly — no extra interpretation layer — and the "no annotation around 100%" behavior falls out of the `.onPace` band.
 
-Use an **exponentially-weighted moving average** of `delta_utilization / delta_time` over the sample buffer. Half-life of roughly 6 hours for the 7d window, 1 hour for the 5h window. The exact constants are tunable; the principle is "smooth enough that single tasks don't dominate, responsive enough that today's pattern shows up."
+## Confidence
 
-Sample buffer rules:
-- Keep `(timestamp, utilization)` pairs from the last 24 hours per window
-- Drop samples older than the buffer window
-- Drop pre-reset samples when a reset occurs (the utilization just dropped to zero — including pre-reset samples in the EWMA would falsely suggest negative burn rate)
-- Buffer is in-memory only; on app launch, warm up from empty
+`Projection.confidence` exists in the model with `.low` and `.full` cases, but `Projector` currently always returns `.full`. The hooks for a low-confidence rendering path (italic, leading `~`) are therefore unused; they're left in the model in case a future EWMA layer wants to gate on sample count.
 
-## Confidence gating
+## Pacing status sentence
 
-Projections are not always trustworthy. Suppress or de-emphasize when confidence is low.
+The popover shows a single status line beneath both `RadialPacingGauge`s. It's chosen by classifying each window's pace ratio into three zones:
 
-The gate uses **current utilization** as the confidence proxy. Reasoning: at 1% utilization, any extrapolation is noise; at 10%, you have meaningful data even if the burn pattern is irregular; at 25%, the projection is reliable enough to display normally.
-
-| Utilization | Behavior |
+| Zone | Range |
 |---|---|
-| < 10% | Hide projection entirely. Pacing-mode gauge shows empty arc. Popover shows percentages and reset countdowns only. |
-| 10% – 25% | Show projection but with reduced visual weight (lighter color, italicized text). Annotations include a leading `~` to imply approximation. |
-| > 25% | Show projection at full weight. |
+| under | `paceRatio < 0.85` |
+| target | `0.85 ≤ paceRatio ≤ 1.10` |
+| over | `paceRatio > 1.10` |
 
-Additionally, suppress the projection annotation in the popover when:
-- The projected end-state is within ±5% of 100% (avoid flicker around the on-pace boundary)
-- The sample buffer has fewer than ~5 entries (warmup period)
-- The current burn rate is zero or negative (a reset just occurred or the user is idle — extrapolating predicts the user will never hit cap, which is technically true but useless)
+Selection rules (in priority order):
+1. If **Weekly** is over → `"Weekly limits hitting in X.\nWill lose Y of subscription access"` (red)
+2. Else if **Session** is over → same template, swapped label (red)
+3. Else if either window is on target → `"On target. Maintain token spend."` (green)
+4. Else if both are under → `"Under utilized. Use more tokens."` (secondary)
+5. Else → no status line
 
-## Asymmetric framing in the popover
+`X` is `secondsUntilReset − deadTime` (i.e. how long until lockout starts) formatted via `DurationFormatter.coarse`. `Y` is the dead time itself, same formatter.
 
-The popover annotation is asymmetric — different framing for over-pace vs under-pace, because the user cares about different things in each regime.
+The asymmetric framing — burnout warns aggressively, under-utilization just suggests, on-target affirms — is the same shape as the original spec. The mechanics differ: a single shared sentence rather than per-bar annotations, no toggle to suppress the under-pace line.
 
-### Over pace — frame as dead time
+## Menu bar color and dot triggers — both pace-ratio driven
 
-```
-locked out ~6h before reset
-locked out ~2 days
-```
+The menu-bar gauge body (vessel + pacing arc) flips to `criticalRed` when the **tracked** window's pace ratio exceeds `1.10`. Below that, it draws in the appearance-aware system label color (auto-tinted to match the menu bar text). Utilization alone never drives the color — a fresh window burning fast goes red even at low utilization, and a slow-burning window stays template even at 90% utilization.
 
-This is the actionable framing. The user knows they will hit the wall and how much it will cost them. Format the dead time using the same minutes/hours/days convention.
+The non-tracked window's severity surfaces as a small dot in the upper-right of the gauge area:
 
-### Under pace — frame as unused capacity
+| Severity | Trigger | Color |
+|---|---|---|
+| Absent | non-tracked pace ratio ≤ 1.10, or no projection | — |
+| Terracotta | `1.10 < paceRatio ≤ 1.30` | `#B5563D` (light) / `#C8654D` (dark) |
+| Red | `paceRatio > 1.30` | `#D63838` (light) / `#E85555` (dark) |
 
-```
-~30% unused at reset
-~12h of capacity unused
-```
+The dot is asymmetric: it never indicates under-pace situations. Underutilization is information, not action; the menu bar surfaces actionable concerns only.
 
-Two valid framings; either is acceptable. The percentage is more concrete for the weekly window (Max users feel "30% of weekly" intuitively); time-based is more concrete when the user is trying to plan additional work.
+## Pacing applies to both windows; default tracks 5h
 
-The under-pace annotation should:
-- Only appear after a meaningful portion of the cycle has elapsed (e.g. past ~30% of the window)
-- Render in a quieter visual weight than the over-pace annotation
-- Be suppressible by user setting (some users only want the warning side)
-
-The over-pace annotation should always be on (it is a load-bearing feature).
-
-### On pace — show nothing
-
-The absence of an annotation is the message. Do not write "you are on pace" — that uses real estate to convey no actionable information. The bare percentage and reset countdown are sufficient.
-
-## Pacing applies to both windows; default surfaces 7d
-
-The same calculation runs for both windows. The popover annotation defaults to showing on the **7d bar** because dead time has more meaningful consequences over longer time horizons (a few hours of 5h lockout is a minor inconvenience; a day of weekly lockout is a real cost).
-
-The 5h projection is available but not surfaced by default. Show it when:
-- 5h becomes the binding constraint (its projection is meaningfully worse than 7d's)
-- User has explicitly chosen to track 5h in the menu bar (the menu bar's selected window gets the popover annotation)
-
-## Menu bar visibility logic — the dot
-
-The menu bar gauge represents one window (default 5h). The other window's status is encoded as a **small terracotta dot** in the upper-right of the gauge area when the *other* window has a problem.
-
-Dot rules:
-- **Absent** — other window is fine, or has insufficient signal (under 10% utilization)
-- **Terracotta** (`#B5563D`) — other window has 6h-1d projected dead time
-- **Red** (`#D63838`) — other window has over 1d projected dead time
-
-Asymmetric: the dot does **not** appear for under-pace situations. Underutilization is information, not action; the menu bar surfaces actionable concerns only.
-
-## Mode switching changes meaning
-
-The user can configure the menu bar to display:
-1. **Vessel mode** (default) — vertical pill gauge encoding utilization 0-100%
-2. **Pacing mode** — speedometer arc encoding pace ratio + dead time
-3. **Numeric mode** — plain percentage text
-
-The selected window (5h or 7d) is independent of the mode. The dot logic applies in all three modes — it always indicates the *other* window having a problem, regardless of how the primary window is being displayed.
+The same calculation runs for both windows. The user picks which one the menu bar tracks via the popover's "Menubar" radio (`AppSettings.trackedWindow`); the default is `.fiveHour`. The popover always shows both windows' bars and both radial gauges regardless of the tracked-window setting — that selection only affects which window's data the menu-bar vessel/arc reflects, and which window's status drives the dot.

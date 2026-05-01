@@ -13,7 +13,7 @@ A user installs via Homebrew, launches once, and forever after has ambient aware
 - **Zero config on first run.** Reads + decrypts Claude desktop's locally-cached OAuth token (Chromium Safe Storage scheme). No login UI, no settings to configure to start working. macOS will prompt once for Keychain access on first launch (system dialog, can't customize). See `docs/auth.md`.
 - **Hard dependency on Claude desktop.** claude-meter is a passive consumer of Claude desktop's auth state. The app must be installed and the user signed in. Token freshness is Claude desktop's job — it refreshes in the background and we just re-read the cached value.
 - **No telemetry, no analytics.** Only network call is to `api.anthropic.com`. Treat user data accordingly.
-- **Tiny footprint.** Idle RAM under 50MB. CPU under 0.1% idle. Slow polling cadence (60s, faster only when popover is open).
+- **Tiny footprint.** Idle RAM under 50MB. CPU under 0.1% idle. Slow polling cadence — 60s in all states. The `/api/oauth/usage` endpoint rate-limits aggressively, so polling harder while the popover is open just trips the limiter sooner.
 - **Graceful degradation.** Network/API/auth failures show a clear error state — never a crash, never a misleading number.
 
 ## Tech stack

@@ -10,10 +10,11 @@ The bar for promoting any of these into v1.x is: **does this make the gauge more
 
 Items that originally lived here and shipped as part of the initial release:
 
-- **Predictive reset / pacing.** Originally v1.1; promoted into v1. EWMA burn rate, pace ratio, projected dead time / unused capacity, confidence gating. See `docs/metrics.md` for the spec and `Services/Projector.swift` for the implementation.
-- **Three display modes.** `vessel` (vertical pill), `pacing` (speedometer arc + adjacent label), `numeric` (`%`). Switchable from the settings panel; persisted in `AppSettings`.
-- **Monochrome-until-85% color philosophy.** Template-tinted by macOS below the threshold; `criticalRed` above. Per-window override (`terracotta` / `red`) for over-pace dead-time annotations.
-- **Settings panel.** Standard `Settings` scene (⌘,) opened from the popover gear, with display mode, tracked window, annotation toggle, and launch-at-login.
+- **Predictive reset / pacing.** Originally v1.1; promoted into v1. Single-snapshot linear extrapolation of the current burn rate to compute pace ratio, projected dead time, and unused capacity. See `docs/metrics.md` for the spec and `Services/Projector.swift` for the implementation. (EWMA smoothing and a sample buffer were considered and dropped in favor of the simpler always-fresh-from-snapshot approach.)
+- **Granular menu-bar visibility.** Three independent toggles in the popover — Show Usage (vessel gauge), Show Pacing (speedometer arc), Show % (percent label next to each visible gauge). At least one of usage/pacing must remain on; the toggles defend that invariant. Replaces the original "vessel / pacing / numeric" mode picker.
+- **Two-window popover dial.** A `RadialPacingGauge` for each window (Session and Weekly) plus a single shared status sentence — under-utilized / on-target / burnout — driven off both pace ratios. Replaces the per-bar projection annotation that originally lived here.
+- **Pace-ratio-driven color.** The menu-bar gauge body flips to critical red when the tracked window's pace ratio exceeds 110% (not when utilization crosses 85%). The non-tracked window's severity shows as a small dot — terracotta from 110–130% pace, red beyond.
+- **Settings panel.** Standard `Settings` scene (⌘,) opened from the popover gear. Public surface is just Launch-at-login. A hidden ⌥⌘⇧D-gated debug section overrides every value the menu bar and popover read so we can preview visual states without burning real quota.
 - **Launch at login.** `LaunchAtLogin.swift` wraps `SMAppService.mainApp`; toggle lives in the settings panel.
 - **Brand identity icon.** Procedurally rendered from `assets/icon.svg` via `tools/render-icon.swift` into the macOS AppIcon set.
 

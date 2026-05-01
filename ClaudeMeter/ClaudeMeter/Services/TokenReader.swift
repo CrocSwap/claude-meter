@@ -9,12 +9,17 @@ import CommonCrypto
 ///   pick up tokens Claude desktop rotates on disk.
 /// - The decrypted access token is **not** cached (it expires; rotation
 ///   happens via the disk blob).
-/// - The Chromium "Safe Storage" master key from the macOS keychain **is**
-///   cached for the process lifetime. That key is set once when Claude
-///   desktop installs and doesn't rotate alongside tokens, so reading it
-///   on every poll just spams the keychain ACL prompt for no benefit. If
-///   decryption ever fails (e.g., Claude desktop reinstalled), we drop
-///   the cache and re-read the key once.
+/// - The Chromium "Safe Storage" master key from the macOS keychain is
+///   cached two ways:
+///     1. **In-memory** for the process lifetime, to avoid re-querying any
+///        keychain on every poll.
+///     2. **Persistently in our own keychain item** (`dev.claudemeter`
+///        service), so the very first launch is the only one that prompts
+///        for access to Claude desktop's `Claude Safe Storage` item.
+///        Subsequent launches read from our own item silently — our app's
+///        signing identity is on its ACL by default.
+///   If decryption with either cached key fails (Claude desktop rotated or
+///   reinstalled), we invalidate that layer and fall through to the next.
 ///
 /// See `docs/auth.md` for the full protocol and policy context.
 enum TokenReader {
@@ -46,26 +51,64 @@ enum TokenReader {
     nonisolated static let cacheJSONKey = "oauth:tokenCache"
     nonisolated static let v10Prefix = Data("v10".utf8)
 
+    /// Service for our own keychain item that persists the Safe Storage
+    /// password between launches. Distinct from `keychainService` so we
+    /// never collide with Claude desktop's items.
+    nonisolated static let persistedCacheService = "dev.claudemeter"
+    nonisolated static let persistedCacheAccount = "claude-safe-storage"
+
     /// The full happy path. Throws a typed `ReadError` on any failure so
     /// callers can pick the right user-facing message.
     nonisolated static func currentToken(now: Date = Date()) throws -> String {
         let blob = try readEncryptedBlob()
 
+        // Layer 1: in-memory cache. No keychain hit at all.
         if let cached = cachedKeychainKey() {
             do {
                 let plaintext = try decrypt(blob: blob, password: cached)
                 return try selectToken(plaintextJSON: plaintext, now: now)
             } catch ReadError.decryptionFailed {
-                // Cached master key stopped working — Claude desktop was
-                // reinstalled or rotated its key. Drop the cache, prompt
-                // the keychain once, and retry below.
                 invalidateKeychainKeyCache()
             }
         }
 
-        let password = try readKeychainKey()
-        storeKeychainKey(password)
+        // Layer 2: our own keychain item. Silent read on every launch after
+        // the first — our binary's signing identity is on the ACL by default,
+        // so no prompt fires.
+        if let persisted = readPersistedKey() {
+            do {
+                let plaintext = try decrypt(blob: blob, password: persisted)
+                storeKeychainKey(persisted)
+                return try selectToken(plaintextJSON: plaintext, now: now)
+            } catch ReadError.decryptionFailed {
+                // Claude desktop rotated the Safe Storage password (or was
+                // reinstalled). Drop our copy and re-read from theirs, which
+                // will prompt — same as a clean first launch.
+                deletePersistedKey()
+            }
+        }
+
+        // Layer 3: Claude desktop's keychain. This is where the user-facing
+        // ACL prompts fire on first launch. Try the canonical "Claude"
+        // account first; each `SecItemCopyMatching` shows its own ACL
+        // prompt the first time the binary touches an item, so querying
+        // both items unconditionally would prompt twice. The fallback
+        // only runs when the canonical path fails for a reason the
+        // fallback can plausibly fix.
+        do {
+            return try unlockAndDecrypt(account: keychainAccount, blob: blob, now: now)
+        } catch ReadError.keychainItemNotFound, ReadError.decryptionFailed {
+            return try unlockAndDecrypt(account: keychainAccountFallback, blob: blob, now: now)
+        }
+    }
+
+    nonisolated private static func unlockAndDecrypt(account: String, blob: Data, now: Date) throws -> String {
+        let password = try readKeychainKey(account: account)
         let plaintext = try decrypt(blob: blob, password: password)
+        storeKeychainKey(password)
+        // Persist for future launches. Failures here are non-fatal — worst
+        // case we'll keep prompting Claude's keychain on each cold start.
+        writePersistedKey(password)
         return try selectToken(plaintextJSON: plaintext, now: now)
     }
 
@@ -92,33 +135,80 @@ enum TokenReader {
         _cachedKeychainKey = nil
     }
 
+    // MARK: - Persistent cache (our own keychain item)
+
+    /// Read the Safe Storage password we previously stashed. Returns `nil`
+    /// for any failure — including the not-found case on first launch and
+    /// any unexpected status. Reading our own item should not produce an
+    /// ACL prompt because we created the item and our binary is on its ACL.
+    nonisolated private static func readPersistedKey() -> Data? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: persistedCacheService,
+            kSecAttrAccount as String: persistedCacheAccount,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess, let data = result as? Data else { return nil }
+        return data
+    }
+
+    /// Persist (or update) the Safe Storage password in our own keychain
+    /// item. Marked device-only so it never syncs to iCloud Keychain.
+    nonisolated private static func writePersistedKey(_ key: Data) {
+        let identity: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: persistedCacheService,
+            kSecAttrAccount as String: persistedCacheAccount,
+        ]
+        var addAttrs = identity
+        addAttrs[kSecValueData as String] = key
+        addAttrs[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+
+        let addStatus = SecItemAdd(addAttrs as CFDictionary, nil)
+        if addStatus == errSecDuplicateItem {
+            let updateAttrs: [String: Any] = [kSecValueData as String: key]
+            _ = SecItemUpdate(identity as CFDictionary, updateAttrs as CFDictionary)
+        }
+    }
+
+    nonisolated private static func deletePersistedKey() {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: persistedCacheService,
+            kSecAttrAccount as String: persistedCacheAccount,
+        ]
+        _ = SecItemDelete(query as CFDictionary)
+    }
+
     // MARK: - I/O steps (not unit tested — exercised end-to-end at runtime)
 
-    nonisolated private static func readKeychainKey() throws -> Data {
-        var lastStatus: OSStatus = errSecItemNotFound
-        for account in [keychainAccount, keychainAccountFallback] {
-            let query: [String: Any] = [
-                kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: keychainService,
-                kSecAttrAccount as String: account,
-                kSecReturnData as String: true,
-                kSecMatchLimit as String: kSecMatchLimitOne,
-            ]
-            var result: AnyObject?
-            let status = SecItemCopyMatching(query as CFDictionary, &result)
-            switch status {
-            case errSecSuccess:
-                if let data = result as? Data { return data }
-            case errSecItemNotFound:
-                lastStatus = status
-                continue
-            case errSecAuthFailed, errSecInteractionRequired, errSecInteractionNotAllowed, errSecUserCanceled:
-                throw ReadError.keychainAccessDenied
-            default:
-                throw ReadError.keychainOther(status)
-            }
+    /// One keychain query, one possible ACL prompt. The two-account fallback
+    /// lives in `currentToken` instead, so we never trigger two prompts in a
+    /// single read.
+    nonisolated private static func readKeychainKey(account: String) throws -> Data {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        switch status {
+        case errSecSuccess:
+            guard let data = result as? Data else { throw ReadError.keychainOther(status) }
+            return data
+        case errSecItemNotFound:
+            throw ReadError.keychainItemNotFound
+        case errSecAuthFailed, errSecInteractionRequired, errSecInteractionNotAllowed, errSecUserCanceled:
+            throw ReadError.keychainAccessDenied
+        default:
+            throw ReadError.keychainOther(status)
         }
-        throw lastStatus == errSecItemNotFound ? ReadError.keychainItemNotFound : ReadError.keychainOther(lastStatus)
     }
 
     nonisolated private static func readEncryptedBlob() throws -> Data {

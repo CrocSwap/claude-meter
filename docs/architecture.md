@@ -1,59 +1,70 @@
 # Architecture
 
-The app is small enough that the architecture is also small. Three actors, a few views, no clever patterns. Resist any urge to introduce protocols, dependency injection containers, or coordinators — there are not enough moving parts to justify them.
-
-## Status
-
-The actor structure (`UsageStore`, `UsagePoller`), `AnthropicAPI`, `TokenReader`, and `LaunchAtLogin` are implemented. `Projector`, `AppSettings`, `DisplayMode`, and the gauge subfolder are pending v1 work — described here as the target shape so they land in the right places.
+The app is small enough that the architecture is also small. One actor, a couple of stores, a handful of views, no clever patterns. Resist any urge to introduce protocols, dependency injection containers, or coordinators — there are not enough moving parts to justify them.
 
 ## Module layout
 
 ```
 ClaudeMeter/
-  ClaudeMeterApp.swift          # @main, MenuBarExtra setup, launch-at-login
+  ClaudeMeterApp.swift          # @main, MenuBarExtra + Settings scene wiring
   Models/
-    UsageSnapshot.swift         # struct: holds 5h + 7d state and timestamp
+    UsageSnapshot.swift         # struct: holds 5h + 7d state
     UsageWindow.swift           # struct: utilization, resetsAt
-    Projection.swift            # struct: signed dead-time/unused-capacity (v1, pending)
-    DisplayMode.swift           # enum: vessel, pacing, numeric (v1, pending)
+    Projection.swift            # struct: paceRatio + outcome (onPace/over/under)
+    DisplayMode.swift           # enum TrackedWindow { fiveHour, sevenDay }
+    Threshold.swift             # 4-state bar fill classifier (neutral/normal/warning/critical)
     AppError.swift              # wraps TokenReader.ReadError + AnthropicAPI.APIError
   Services/
-    UsageStore.swift            # @MainActor @Observable: source of truth + sample buffer
-    UsagePoller.swift           # actor: timer + API calls + backoff
+    UsageStore.swift            # @MainActor @Observable: source of truth
+    UsagePoller.swift           # actor: 60s timer + API calls + backoff
     AnthropicAPI.swift          # async fns: parse response, classify errors
     TokenReader.swift           # decrypts Claude desktop's locally-cached OAuth token
-    Projector.swift             # pure fns: EWMA smoothing, projection math (v1, pending)
-    LaunchAtLogin.swift         # SMAppService wrapper for the popover toggle
+    Projector.swift             # pure fn: linear extrapolation → Projection
+    LaunchAtLogin.swift         # SMAppService wrapper used by the settings panel
   Views/
-    MenuBarLabel.swift          # the gauge, observes store
-    Gauges/                     # v1, pending
-      VesselGauge.swift         # vertical pill, default mode
-      PacingArc.swift           # speedometer arc, opt-in mode
-      NumericLabel.swift        # plain text, opt-in mode
-    Popover/
-      UsagePopover.swift        # main popover container
-      UsageBar.swift            # one row per window (5h, 7d), with progress bar
-      ProjectionAnnotation.swift # the dead-time/unused-capacity line (v1, pending)
+    MenuBarLabel.swift          # composites VesselGauge + PacingArc + warning dot, snapshotted into NSImage
+    UsagePopover.swift          # main popover container
+    UsageBar.swift              # remaining-capacity bar per window
+    Colors.swift                # appearance-aware brand colors
+    DurationFormatter.swift     # compact / verbose / coarse human-readable durations
+    Gauges/
+      VesselGauge.swift         # vertical pill, drains as utilization grows
+      PacingArc.swift           # menu-bar speedometer arc (left endpoint → splatter clearance)
+      RadialPacingGauge.swift   # popover dial, 0–150% with green/amber/red zones
+      NumericLabel.swift        # plain percentage text (currently unused)
+      WarningDot.swift          # non-tracked-window severity dot
+      ClaudeMark.swift          # 8-rayed splatter mark used as a brand watermark
   Settings/
-    AppSettings.swift           # @AppStorage wrapper for user prefs (v1, pending)
+    AppSettings.swift           # @Observable wrapper for user prefs
+    SettingsView.swift          # macOS Settings scene (launch-at-login + hidden debug)
+    DebugSettings.swift         # ⌥⌘⇧D-gated value override for previewing visual states
+  Resources/
+    Assets.xcassets             # AppIcon (rendered from assets/icon.svg) + AccentColor
+    Info.plist
+assets/icon.svg                  # source of truth for the app icon
+tools/render-icon.swift          # rasterizes icon.svg into the AppIcon set
+utils/                           # helper scripts (token probe, usage-API probe)
 docs/                            # all the specs that aren't code
-.github/workflows/release.yml    # CI for signed releases
 ```
+
+CI for signed releases is not yet wired up; when it lands it'll live at `.github/workflows/release.yml`.
 
 ## Actor boundaries
 
-Three actors, kept small and single-purpose:
+Two stateful actors, plus pure helpers and a couple of `@Observable` settings classes:
 
-**`UsageStore`** is the source of truth. `@MainActor @Observable` so SwiftUI views observe it directly via the Observation macros. Holds the current `UsageSnapshot`, timestamp of last successful fetch, current error state, and the sample buffer used for projections. **Views read from this and only from this.** Never let a view call the API directly.
+**`UsageStore`** is the source of truth. `@MainActor @Observable` so SwiftUI views observe it directly via the Observation macros. Holds the current `UsageSnapshot`, timestamp of last successful fetch, and current error state. **Views read from this and only from this.** Never let a view call the API directly.
 
-**`UsagePoller`** owns the timer. On each tick: read the OAuth token via `TokenReader`, call `AnthropicAPI.fetchUsage()`, on success update the store, on failure record the error in the store and apply exponential backoff (capped at 5 minutes). The poller does not interpret data; it just moves bytes from the network to the store.
+**`UsagePoller`** owns the timer. On each tick: read the OAuth token via `TokenReader`, call `AnthropicAPI.fetchUsage()`, on success update the store, on failure record the error in the store and apply exponential backoff (capped at 5 minutes). On HTTP 429 with a `Retry-After` header, the next sleep honors the server's value as a one-shot override. The poller does not interpret data; it just moves bytes from the network to the store.
 
-**Pure functions** (not actors) for the rest:
+**Pure helpers** (not actors) for the rest:
 - `AnthropicAPI` — given a token, return a parsed `UsageSnapshot` or throw a typed `APIError`
 - `TokenReader` — decrypts Claude desktop's locally-cached OAuth token; see `docs/auth.md` for the full protocol
-- `Projector` — given a sample buffer and current snapshot, return a `Projection`
+- `Projector` — given a `UsageWindow` and the window's total duration, return a `Projection` (or `nil` when inputs can't yield a meaningful pace ratio)
 
-The pure-function rule matters because these are the parts that need unit tests. Actors are for managing state; tests don't need state.
+`AppSettings` and `LaunchAtLogin` are small `@Observable` `@MainActor` classes that own user preferences — `AppSettings` for menu-bar visibility/percent toggles + tracked window, `LaunchAtLogin` for the `SMAppService.mainApp` toggle. `DebugSettings` (a sibling of `AppSettings`) holds the hidden ⌥⌘⇧D override values used to preview visual states without burning real quota.
+
+The pure-helper rule matters because these are the parts that need unit tests. Stateful classes are for managing state; tests don't need state.
 
 `AppError` wraps the two error families the poller can produce (`TokenReader.ReadError` and `AnthropicAPI.APIError`) so `UsageStore` and views render them uniformly.
 
@@ -77,9 +88,9 @@ If a file needs to import something it shouldn't (e.g. a View importing `URLSess
 
 ## Testing strategy
 
-- **Unit tests:** `AnthropicAPI` parsers (the most likely thing to break when the API changes), `TokenReader` pure helpers (decrypt, selectToken), `Projector` math (signed projections, EWMA, confidence gating)
-- **Snapshot tests:** the gauge and popover views at common states (0%, 50%, 95%, error, no-token, all three display modes)
-- **Manual smoke tests:** see `docs/testing.md` (to be written when the app exists). Cold launch, token missing, network offline, 401, 500, both windows null, individual windows null
+- **Unit tests:** `AnthropicAPI` parsers (the most likely thing to break when the API changes), `TokenReader` pure helpers (`decrypt`, `selectToken`), `Projector` math (pace ratio, on-pace band, dead-time, unused-fraction).
+- **Snapshot tests:** view `#Preview` blocks cover the common states (low/medium/high utilization, no data, error). When the app gets a more formal snapshot pipeline, expand from there.
+- **Manual smoke tests:** cold launch, token missing, network offline, 401, 500, both windows null, individual windows null. The hidden ⌥⌘⇧D debug panel in the settings sheet lets you preview every visual state without burning real quota.
 
 No mocking framework. Hand-roll fakes — they're three lines for each protocol you'd otherwise mock.
 
