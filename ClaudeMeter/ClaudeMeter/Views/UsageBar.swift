@@ -4,12 +4,10 @@ import SwiftUI
 /// terms (battery-style): the bar shrinks as the user burns through the
 /// window. Color reflects how much room is left — green above 40%, yellow
 /// 20–40%, red at or below 20%. See `docs/brand.md`. Subtitle shows
-/// "X% left" plus the reset countdown, with an optional projection
-/// annotation underneath.
+/// "X% left" plus the reset countdown.
 struct UsageBar: View {
     let title: String
     let window: UsageWindow?
-    var projection: Projection? = nil
     var now: Date = Date()
 
     var body: some View {
@@ -37,12 +35,6 @@ struct UsageBar: View {
             Text(resetText)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
-            if let line = annotationText {
-                Text(line)
-                    .font(.caption2)
-                    .foregroundStyle(annotationColor)
-                    .fontWeight(annotationWeight)
-            }
         }
     }
 
@@ -75,23 +67,6 @@ struct UsageBar: View {
         return "resets in \(DurationFormatter.verbose(interval))"
     }
 
-    /// Annotation line beneath the reset countdown. Over-pace dead time
-    /// is communicated by the radial gauge's status sentence in the
-    /// popover, so this slot is reserved for under-pace "unused at reset"
-    /// info.
-    private var annotationText: String? {
-        guard let projection else { return nil }
-        guard case .underPace(let unusedFraction, _) = projection.outcome else {
-            return nil
-        }
-        let approx = projection.confidence == .low ? "~" : ""
-        let pct = Int((unusedFraction * 100).rounded())
-        return "\(approx)\(pct)% unused at reset"
-    }
-
-    private var annotationColor: Color { .secondary }
-
-    private var annotationWeight: Font.Weight { .regular }
 }
 
 #Preview("Low") {
@@ -114,32 +89,6 @@ struct UsageBar: View {
     UsageBar(title: "5 hours",
              window: UsageWindow(utilization: 92.0,
                                  resetsAt: Date().addingTimeInterval(45 * 60)))
-        .padding()
-        .frame(width: 280)
-}
-
-#Preview("Over pace") {
-    UsageBar(title: "7 days",
-             window: UsageWindow(utilization: 78.0,
-                                 resetsAt: Date().addingTimeInterval(2 * 86400)),
-             projection: Projection(
-                paceRatio: 1.4,
-                confidence: .full,
-                outcome: .overPace(deadTime: 6 * 3600)
-             ))
-        .padding()
-        .frame(width: 280)
-}
-
-#Preview("Under pace") {
-    UsageBar(title: "7 days",
-             window: UsageWindow(utilization: 28.0,
-                                 resetsAt: Date().addingTimeInterval(4 * 86400)),
-             projection: Projection(
-                paceRatio: 0.6,
-                confidence: .full,
-                outcome: .underPace(unusedFraction: 0.30, unusedTime: 12 * 3600)
-             ))
         .padding()
         .frame(width: 280)
 }

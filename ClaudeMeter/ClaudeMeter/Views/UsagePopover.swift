@@ -21,16 +21,8 @@ struct UsagePopover: View {
                     .clipShape(Capsule())
                     .frame(maxWidth: .infinity, alignment: .center)
             }
-            UsageBar(
-                title: "Session",
-                window: displaySnapshot?.fiveHour,
-                projection: displayProjection(for: .fiveHour)
-            )
-            UsageBar(
-                title: "Weekly",
-                window: displaySnapshot?.sevenDay,
-                projection: displayProjection(for: .sevenDay)
-            )
+            UsageBar(title: "Session", window: displaySnapshot?.fiveHour)
+            UsageBar(title: "Weekly", window: displaySnapshot?.sevenDay)
 
             Divider()
 
