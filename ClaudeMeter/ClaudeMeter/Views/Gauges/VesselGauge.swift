@@ -14,6 +14,11 @@ struct VesselGauge: View {
     /// Drawing color. The caller picks black for template rendering or
     /// `criticalRed` for explicit critical-state rendering.
     var color: Color = .primary
+    /// Whether to render the brand splatter mark in the bottom-right
+    /// corner. Off when the menu bar shows vessel + pacing side by side
+    /// — the pacing arc carries the splatter on its outer side, so two
+    /// would be redundant.
+    var showMark: Bool = true
 
     private let outerWidth: CGFloat = 9
     private let outerHeight: CGFloat = 16
@@ -46,15 +51,17 @@ struct VesselGauge: View {
             }
             .frame(width: outerWidth, height: outerHeight)
 
-            ClaudeMark(color: color, size: markSize, rayWidth: 1.2)
-                .offset(
-                    x: outerWidth - markSize / 2 + markPokeOut,
-                    y: outerHeight - markSize / 2 + markPokeOut
-                )
+            if showMark {
+                ClaudeMark(color: color, size: markSize, rayWidth: 1.2)
+                    .offset(
+                        x: outerWidth - markSize / 2 + markPokeOut,
+                        y: outerHeight - markSize / 2 + markPokeOut
+                    )
+            }
         }
         .frame(
-            width: outerWidth + markSize / 2 + markPokeOut,
-            height: outerHeight + markSize / 2 + markPokeOut,
+            width: showMark ? outerWidth + markSize / 2 + markPokeOut : outerWidth,
+            height: showMark ? outerHeight + markSize / 2 + markPokeOut : outerHeight,
             alignment: .topLeading
         )
     }

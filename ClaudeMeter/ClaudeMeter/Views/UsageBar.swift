@@ -16,9 +16,10 @@ struct UsageBar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                Text(title)
-                    .font(.subheadline)
-                    .foregroundStyle(.primary)
+                Text(title.uppercased())
+                    .font(.caption2.weight(.semibold))
+                    .tracking(1)
+                    .foregroundStyle(.secondary)
                 Spacer()
                 Text(percentText)
                     .font(.subheadline.monospacedDigit())
@@ -75,42 +76,24 @@ struct UsageBar: View {
         return "resets in \(DurationFormatter.verbose(interval))"
     }
 
-    /// The annotation line beneath the reset countdown — projected dead
-    /// time for over-pace, or unused capacity for under-pace. Returns
-    /// `nil` when there's nothing to say (no projection, on-pace outcome,
-    /// or under-pace with the user's annotation suppressed).
+    /// Annotation line beneath the reset countdown. Over-pace dead time
+    /// is communicated by the radial gauge's status sentence in the
+    /// popover, so this slot is reserved for under-pace "unused at reset"
+    /// info — and only when the user has it enabled.
     private var annotationText: String? {
         guard let projection else { return nil }
-        let approx = projection.confidence == .low ? "~" : ""
-        switch projection.outcome {
-        case .onPace:
+        guard showUnderPaceAnnotation,
+              case .underPace(let unusedFraction, _) = projection.outcome else {
             return nil
-        case .overPace(let deadTime):
-            return "locked out \(approx)\(DurationFormatter.verbose(deadTime)) before reset"
-        case .underPace(let unusedFraction, _):
-            guard showUnderPaceAnnotation else { return nil }
-            let pct = Int((unusedFraction * 100).rounded())
-            return "\(approx)\(pct)% unused at reset"
         }
+        let approx = projection.confidence == .low ? "~" : ""
+        let pct = Int((unusedFraction * 100).rounded())
+        return "\(approx)\(pct)% unused at reset"
     }
 
-    private var annotationColor: Color {
-        guard let projection else { return .secondary }
-        switch projection.outcome {
-        case .overPace(let deadTime):
-            return deadTime >= 86_400 ? .criticalRed : .primary
-        case .underPace, .onPace:
-            return .secondary
-        }
-    }
+    private var annotationColor: Color { .secondary }
 
-    private var annotationWeight: Font.Weight {
-        guard let projection else { return .regular }
-        switch projection.outcome {
-        case .overPace: return .semibold
-        case .underPace, .onPace: return .regular
-        }
-    }
+    private var annotationWeight: Font.Weight { .regular }
 }
 
 #Preview("Low") {

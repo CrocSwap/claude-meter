@@ -11,6 +11,16 @@ struct UsagePopover: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            if settings.debug.enabled {
+                Text("DEBUG MODE")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.usageYellow)
+                    .clipShape(Capsule())
+                    .frame(maxWidth: .infinity, alignment: .center)
+            }
             UsageBar(
                 title: "Session",
                 window: displaySnapshot?.fiveHour,
@@ -37,14 +47,32 @@ struct UsagePopover: View {
                         projection: displayProjection(for: .sevenDay)
                     )
                 }
-                if let status = pacingStatus {
-                    Text(status.text)
-                        .font(.footnote)
-                        .foregroundStyle(status.color)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: .infinity)
+                TimelineView(.periodic(from: .now, by: 60)) { context in
+                    if let status = pacingStatus(now: context.date) {
+                        Text(status.text)
+                            .font(.footnote)
+                            .foregroundStyle(status.color)
+                            .multilineTextAlignment(.center)
+                            .lineLimit(nil)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity)
+                    }
                 }
             }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 6) {
+                Toggle("Show Usage in Menubar", isOn: showUsageBinding)
+                    .toggleStyle(.checkbox)
+                    .disabled(onlyUsageChecked)
+                Toggle("Show Pacing in Menubar", isOn: showPacingBinding)
+                    .toggleStyle(.checkbox)
+                    .disabled(onlyPacingChecked)
+                Toggle("Show % in Menubar", isOn: showPercentBinding)
+                    .toggleStyle(.checkbox)
+            }
+            .font(.subheadline)
 
             Divider()
 
@@ -94,6 +122,51 @@ struct UsagePopover: View {
         .frame(width: 280)
     }
 
+    // MARK: - Menu-bar visibility checkboxes
+
+    /// True when only the usage box is checked — disables it so the user
+    /// can't uncheck the only remaining option.
+    private var onlyUsageChecked: Bool {
+        settings.showUsageInMenuBar && !settings.showPacingInMenuBar
+    }
+
+    private var onlyPacingChecked: Bool {
+        !settings.showUsageInMenuBar && settings.showPacingInMenuBar
+    }
+
+    /// Bindings that defensively refuse to set both flags to false. The
+    /// `.disabled(...)` modifier already prevents the click in the UI, but
+    /// the guard keeps the invariant intact if anything else tries to
+    /// flip the state.
+    private var showUsageBinding: Binding<Bool> {
+        Binding(
+            get: { settings.showUsageInMenuBar },
+            set: { newValue in
+                if !newValue && !settings.showPacingInMenuBar { return }
+                settings.showUsageInMenuBar = newValue
+            }
+        )
+    }
+
+    private var showPacingBinding: Binding<Bool> {
+        Binding(
+            get: { settings.showPacingInMenuBar },
+            set: { newValue in
+                if !newValue && !settings.showUsageInMenuBar { return }
+                settings.showPacingInMenuBar = newValue
+            }
+        )
+    }
+
+    /// Independent of the gauge-visibility toggles — this one has no
+    /// invariant to defend, it just maps straight through.
+    private var showPercentBinding: Binding<Bool> {
+        Binding(
+            get: { settings.showPercentInMenuBar },
+            set: { settings.showPercentInMenuBar = $0 }
+        )
+    }
+
     /// Snapshot the views should render — debug override if enabled, real
     /// store data otherwise.
     private var displaySnapshot: UsageSnapshot? {
@@ -135,17 +208,26 @@ struct UsagePopover: View {
     /// - any `85–110%` → on-target affirmation
     /// - any `> 110%` → burnout warning, naming the offending window
     ///   (Weekly takes precedence when both are over).
-    private var pacingStatus: PacingStatusMessage? {
+    ///
+    /// `now` is threaded through so the burnout line's "limits hitting in
+    /// X" stays live as time passes.
+    private func pacingStatus(now: Date) -> PacingStatusMessage? {
         let session = displayProjection(for: .fiveHour)
         let weekly = displayProjection(for: .sevenDay)
         let sessionZone = pacingZone(session)
         let weeklyZone = pacingZone(weekly)
 
         if weeklyZone == .over, let p = weekly {
-            return .burnout(label: "Weekly", deadTime: deadTime(of: p))
+            return makeBurnout(label: "Weekly",
+                               projection: p,
+                               window: displaySnapshot?.sevenDay,
+                               now: now)
         }
         if sessionZone == .over, let p = session {
-            return .burnout(label: "Session", deadTime: deadTime(of: p))
+            return makeBurnout(label: "Session",
+                               projection: p,
+                               window: displaySnapshot?.fiveHour,
+                               now: now)
         }
         if sessionZone == .target || weeklyZone == .target {
             return .onTarget
@@ -165,15 +247,31 @@ struct UsagePopover: View {
         return .over
     }
 
-    private func deadTime(of projection: Projection) -> TimeInterval {
-        if case .overPace(let dt) = projection.outcome { return dt }
-        return 0
+    /// Build a `.burnout` message. `timeUntilLockout = secondsUntilReset
+    /// − deadTime`; we get `secondsUntilReset` from the window (the only
+    /// place it's stored) rather than threading it through `Projection`.
+    private func makeBurnout(
+        label: String,
+        projection: Projection,
+        window: UsageWindow?,
+        now: Date
+    ) -> PacingStatusMessage {
+        let dt: TimeInterval
+        if case .overPace(let d) = projection.outcome { dt = d } else { dt = 0 }
+        let secondsUntilReset: TimeInterval
+        if let resets = window?.resetsAt {
+            secondsUntilReset = max(0, resets.timeIntervalSince(now))
+        } else {
+            secondsUntilReset = 0
+        }
+        let timeUntilLockout = max(0, secondsUntilReset - dt)
+        return .burnout(label: label, timeUntilLockout: timeUntilLockout, deadTime: dt)
     }
 
     enum PacingStatusMessage {
         case underUtilized
         case onTarget
-        case burnout(label: String, deadTime: TimeInterval)
+        case burnout(label: String, timeUntilLockout: TimeInterval, deadTime: TimeInterval)
 
         var text: String {
             switch self {
@@ -181,8 +279,10 @@ struct UsagePopover: View {
                 return "Under utilized. Use more tokens."
             case .onTarget:
                 return "On target. Maintain token spend."
-            case .burnout(let label, let dt):
-                return "\(label) burnout projected \(DurationFormatter.coarse(dt)) early. Reduce token spend."
+            case .burnout(let label, let lockoutIn, let dead):
+                let lock = DurationFormatter.coarse(lockoutIn)
+                let deadStr = DurationFormatter.coarse(dead)
+                return "⚠️ \(label) limits hitting in \(lock).\nWill lose \(deadStr) of subscription access"
             }
         }
 

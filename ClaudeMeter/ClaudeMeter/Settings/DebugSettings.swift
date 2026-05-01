@@ -99,46 +99,55 @@ final class DebugSettings {
         )
     }
 
-    func syntheticProjection(for window: TrackedWindow) -> Projection? {
+    func syntheticProjection(for window: TrackedWindow, now: Date = Date()) -> Projection? {
+        let snapshot = syntheticSnapshot(now: now)
+        let usageWindow: UsageWindow?
+        let duration: TimeInterval
+        let outcome: DebugOutcomeKind
+        let overPaceHours: Double
+        let unusedFraction: Double
+        let minutesToReset: Double
         switch window {
         case .fiveHour:
-            return projection(
-                outcome: fiveHourOutcome,
-                overPaceHours: fiveHourOverPaceHours,
-                unusedFraction: fiveHourUnusedFraction,
-                minutesToReset: fiveHourMinutesToReset
-            )
+            usageWindow = snapshot.fiveHour
+            duration = 5 * 3600
+            outcome = fiveHourOutcome
+            overPaceHours = fiveHourOverPaceHours
+            unusedFraction = fiveHourUnusedFraction
+            minutesToReset = fiveHourMinutesToReset
         case .sevenDay:
-            return projection(
-                outcome: sevenDayOutcome,
-                overPaceHours: sevenDayOverPaceHours,
-                unusedFraction: sevenDayUnusedFraction,
-                minutesToReset: sevenDayMinutesToReset
-            )
+            usageWindow = snapshot.sevenDay
+            duration = 7 * 86400
+            outcome = sevenDayOutcome
+            overPaceHours = sevenDayOverPaceHours
+            unusedFraction = sevenDayUnusedFraction
+            minutesToReset = sevenDayMinutesToReset
         }
-    }
 
-    private func projection(
-        outcome: DebugOutcomeKind,
-        overPaceHours: Double,
-        unusedFraction: Double,
-        minutesToReset: Double
-    ) -> Projection? {
+        // Pace ratio always tracks the debug snapshot so the gauges
+        // respond to the Utilization / Resets-in sliders. The outcome
+        // picker only chooses what kind of outcome rides along — it no
+        // longer overrides the ratio (which used to leave the needle
+        // pinned at 1.0 / 1.5 / 0.6 regardless of the sliders).
+        guard let w = usageWindow,
+              let base = Projector.project(window: w, windowDuration: duration, now: now) else {
+            return nil
+        }
         switch outcome {
         case .none:
-            return nil
+            return base
         case .onPace:
-            return Projection(paceRatio: 1.0, confidence: .full, outcome: .onPace)
+            return Projection(paceRatio: base.paceRatio, confidence: .full, outcome: .onPace)
         case .overPace:
             return Projection(
-                paceRatio: 1.5,
+                paceRatio: base.paceRatio,
                 confidence: .full,
                 outcome: .overPace(deadTime: max(0, overPaceHours) * 3600)
             )
         case .underPace:
             let frac = max(0, min(1, unusedFraction))
             return Projection(
-                paceRatio: 0.6,
+                paceRatio: base.paceRatio,
                 confidence: .full,
                 outcome: .underPace(
                     unusedFraction: frac,

@@ -17,19 +17,33 @@ struct RadialPacingGauge: View {
     let label: String
     let projection: Projection?
 
-    /// Visual maximum on the arc — pace ratios above this are clamped to
-    /// the right end of the gauge.
+    /// Visual maximum on the arc — pace ratios above this push the
+    /// needle into the off-gauge overflow zone (see `overflowDegrees`).
     private let arcMax: Double = 1.5
-    /// Boundary between the green safe zone and the amber→red over-pace
-    /// zone — also where the needle's color shifts.
-    private let onTargetBoundary: Double = 1.00
-    /// Above this, the needle goes red rather than amber. Mirrors the
-    /// urgency escalation along the gradient itself.
-    private let warningBoundary: Double = 1.05
+    /// How far past the right end of the arc the needle is allowed to
+    /// swing when the pace ratio runs off the gauge. Reads as "the
+    /// engine's running so hot the needle's pinned past the dial."
+    private let overflowDegrees: Double = 15
+    /// Pace-ratio overshoot at which the overflow needle reaches its
+    /// maximum 15° excursion. A burst of e.g. 200% pace lands fully
+    /// off-gauge; anything beyond just stays pinned there.
+    private let overflowSaturation: Double = 0.5
+    /// Pace ratio at which the gauge turns from green to amber. Aligned
+    /// with the popover's "under-utilized → on-target" status barrier so
+    /// the gauge color and the status sentence change in lockstep.
+    private let underBoundary: Double = 0.85
+    /// Pace ratio at which the gauge turns from amber to red. Aligned
+    /// with the "on-target → burnout" status barrier.
+    private let burnoutBoundary: Double = 1.10
 
     private let arcWidth: CGFloat = 110
-    private let arcHeight: CGFloat = 64
+    private let arcHeight: CGFloat = 76
     private let strokeWidth: CGFloat = 10
+    /// Vertical room reserved below the gauge center for the off-gauge
+    /// needle when pace ratio exceeds `arcMax`. The needle pivots at
+    /// `size.height - centerInset` so the overflow swing has space to
+    /// land instead of getting clipped by the canvas bounds.
+    private let centerInset: CGFloat = 14
 
     var body: some View {
         VStack(spacing: 6) {
@@ -56,31 +70,34 @@ struct RadialPacingGauge: View {
 
     private var arcCanvas: some View {
         Canvas { context, size in
-            // Arc is the upper semicircle of a circle whose center sits at
-            // the bottom-center of the canvas.
-            let center = CGPoint(x: size.width / 2, y: size.height - 2)
-            let radius = min(size.width / 2, size.height) - strokeWidth / 2 - 1
+            // Arc is the upper semicircle of a circle whose center sits
+            // `centerInset` above the canvas bottom — leaving room below
+            // for the needle when it swings off the right end of the
+            // gauge.
+            let center = CGPoint(x: size.width / 2, y: size.height - centerInset)
+            let radius = min(size.width / 2, size.height - centerInset) - strokeWidth / 2 - 1
 
-            let safeEnd = arcDegrees(for: onTargetBoundary) // ~300°
+            let greenEnd = arcDegrees(for: underBoundary)    // ~282°
+            let amberEnd = arcDegrees(for: burnoutBoundary)  // ~312°
 
-            // Safe zone — solid green from 0% all the way to 100%.
-            stroke(arcFrom: 180, to: safeEnd,
+            // Green zone — under utilized (0–85%).
+            stroke(arcFrom: 180, to: greenEnd,
                    center: center, radius: radius,
                    shading: .color(.usageGreen),
                    cap: .round, in: context)
 
-            // Over-pace zone — amber → red gradient from 100% to 150%.
-            // Linear gradient from the segment start (top-center) to the
-            // end (right-center) approximates the conic sweep over the
-            // ~60° segment well enough.
-            let overStart = arcPoint(center: center, radius: radius, degrees: safeEnd)
-            let overEnd = arcPoint(center: center, radius: radius, degrees: 360)
-            stroke(arcFrom: safeEnd, to: 360,
+            // Amber zone — on target (85–110%). Slight overlap on each
+            // side keeps adjacent zones butting cleanly without sub-
+            // pixel seams.
+            stroke(arcFrom: greenEnd - 0.3, to: amberEnd + 0.3,
                    center: center, radius: radius,
-                   shading: .linearGradient(
-                        Gradient(colors: [.pacingAmber, .criticalRed]),
-                        startPoint: overStart,
-                        endPoint: overEnd),
+                   shading: .color(.pacingAmber),
+                   cap: .butt, in: context)
+
+            // Red zone — burnout (110–150%).
+            stroke(arcFrom: amberEnd, to: 360,
+                   center: center, radius: radius,
+                   shading: .color(.criticalRed),
                    cap: .round, in: context)
 
             // Needle — drawn from a point just outside the pivot to a
@@ -148,15 +165,20 @@ struct RadialPacingGauge: View {
 
     private var needleDegrees: Double {
         guard let p = projection else { return 180 }
-        return arcDegrees(for: p.paceRatio)
+        if p.paceRatio <= arcMax {
+            return arcDegrees(for: p.paceRatio)
+        }
+        let overshoot = min(overflowSaturation, p.paceRatio - arcMax)
+        let extra = (overshoot / overflowSaturation) * overflowDegrees
+        return 360 + extra
     }
 
     private var paceRatio: Double { projection?.paceRatio ?? 0 }
 
     private var valueColor: Color {
         guard projection != nil else { return .secondary }
-        if paceRatio < onTargetBoundary { return .usageGreen }
-        if paceRatio < warningBoundary { return .pacingAmber }
+        if paceRatio < underBoundary { return .usageGreen }
+        if paceRatio <= burnoutBoundary { return .pacingAmber }
         return .criticalRed
     }
 }

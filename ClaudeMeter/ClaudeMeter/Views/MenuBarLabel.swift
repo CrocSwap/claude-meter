@@ -12,6 +12,10 @@ import AppKit
 struct MenuBarLabel: View {
     let store: UsageStore
     let settings: AppSettings
+    /// Tracked so the rendered NSImage refreshes when the user toggles
+    /// light/dark — `monoColor` reads from this and feeds both gauges and
+    /// text. Without it, text stays the appearance it was first rendered in.
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         Image(nsImage: rendered)
@@ -25,23 +29,18 @@ struct MenuBarLabel: View {
         return image
     }
 
-    /// True when nothing in the composite needs explicit color — the image
-    /// can be a template and macOS auto-tints it. False when we have a
-    /// critical-red gauge, an over-pace dead-time arc, or a warning dot.
-    private var isTemplate: Bool {
-        if shouldShowError { return true }
-        if isCritical { return false }
-        if hasOverPaceColor { return false }
-        if dotSeverity != .none { return false }
-        return true
-    }
+    /// Always false now that we render with explicit appearance-aware
+    /// colors (`monoColor`). Template mode would replace those colors with
+    /// the menu bar's system tint, which is exactly the behavior that was
+    /// causing text to flip from white to black when the gauge flipped red.
+    private var isTemplate: Bool { false }
 
     @ViewBuilder
     private var composite: some View {
         if shouldShowError {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Color.black)
+                .foregroundStyle(monoColor)
                 .padding(2)
         } else {
             ZStack(alignment: .topTrailing) {
@@ -59,24 +58,37 @@ struct MenuBarLabel: View {
 
     @ViewBuilder
     private var gaugeBody: some View {
-        switch settings.displayMode {
-        case .vessel:
-            VesselGauge(utilization: trackedUtil, color: gaugeColor)
-        case .pacing:
-            HStack(spacing: 3) {
+        let showUsage = settings.showUsageInMenuBar
+        let showPacing = settings.showPacingInMenuBar
+        let showPercent = settings.showPercentInMenuBar
+        HStack(spacing: 4) {
+            if showUsage {
+                // Suppress the vessel's splatter when the pacing arc is
+                // also visible — the pacing arc carries its own splatter
+                // on the right side, and two would crowd the menu bar.
+                VesselGauge(
+                    utilization: trackedUtil,
+                    color: gaugeColor,
+                    showMark: !showPacing
+                )
+                if showPercent {
+                    Text(usagePercentText)
+                        .font(.system(size: 10, weight: .medium).monospacedDigit())
+                        .foregroundStyle(monoColor)
+                }
+            }
+            if showPacing {
                 PacingArc(
                     paceRatio: trackedProjection?.paceRatio ?? 0,
                     outcome: trackedProjection?.outcome,
                     color: gaugeColor
                 )
-                Text(pacingText)
-                    .font(.system(size: 10, weight: .medium).monospacedDigit())
-                    .foregroundStyle(pacingTextColor)
+                if showPercent {
+                    Text(pacingPercentText)
+                        .font(.system(size: 10, weight: .medium).monospacedDigit())
+                        .foregroundStyle(monoColor)
+                }
             }
-        case .numeric:
-            Text(numericText)
-                .font(.system(size: 11, weight: .semibold).monospacedDigit())
-                .foregroundStyle(gaugeColor)
         }
     }
 
@@ -118,45 +130,45 @@ struct MenuBarLabel: View {
         WarningDot.Severity(forNonTracked: nonTrackedProjection)
     }
 
-    private var isCritical: Bool {
-        guard let u = trackedUtil else { return false }
-        return Threshold(utilization: u) == .critical
-    }
-
-    private var hasOverPaceColor: Bool {
-        if case .overPace = trackedProjection?.outcome { return true }
-        return false
+    /// Both vessel and pacing arc go red on the same trigger: tracked
+    /// pace ratio above 110% (the same boundary the popover radial gauge
+    /// uses for its red zone). Vessel is therefore "fill drains, body
+    /// turns red when you're projected to lock out early."
+    private var isOverPaceCritical: Bool {
+        guard let p = trackedProjection else { return false }
+        return p.paceRatio > 1.10
     }
 
     private var gaugeColor: Color {
-        isCritical ? .criticalRed : .black
+        isOverPaceCritical ? .criticalRed : monoColor
     }
 
-    // MARK: - Pacing-mode label
-
-    private var pacingText: String {
-        guard let projection = trackedProjection else { return "—" }
-        let pace = projection.paceRatio
-        if pace >= 0.95 && pace <= 1.05 {
-            return "on pace"
-        }
-        if pace > 1.05, case .overPace(let dt) = projection.outcome {
-            return "+\(DurationFormatter.compact(dt))"
-        }
-        return "\(Int((pace * 100).rounded()))% pace"
+    /// "Default" color for any non-critical element — matches the menu
+    /// bar's text color in the current appearance so the rendered image
+    /// looks the same in both template and non-template paths. Without
+    /// this, `.black` would render literally and disappear into a dark
+    /// menu bar whenever the gauge flips out of template (red, dot).
+    private var monoColor: Color {
+        colorScheme == .dark ? .white : .black
     }
 
-    private var pacingTextColor: Color {
-        guard let projection = trackedProjection else { return .black }
-        if case .overPace(let dt) = projection.outcome {
-            return dt > 86_400 ? .criticalRed : .terracotta
-        }
-        return .black
-    }
+    // MARK: - Percent labels
 
-    private var numericText: String {
+    /// Remaining capacity shown to the right of the vessel — matches the
+    /// vessel's battery-style fill (the pill drains as you burn tokens,
+    /// so the percent counts down with it).
+    private var usagePercentText: String {
         guard let u = trackedUtil else { return "—" }
         let remaining = max(0, 100 - u)
         return "\(Int(remaining.rounded()))%"
     }
+
+    /// Pace ratio shown to the right of the pacing arc. Replaces the old
+    /// "on pace" / "+Xh" conditional text — always a raw percent so the
+    /// label stays consistent across zones.
+    private var pacingPercentText: String {
+        guard let projection = trackedProjection else { return "—" }
+        return "\(Int((projection.paceRatio * 100).rounded()))%"
+    }
+
 }

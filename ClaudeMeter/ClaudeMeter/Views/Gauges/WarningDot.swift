@@ -8,22 +8,21 @@ struct WarningDot: View {
 
     enum Severity: Equatable, Sendable {
         case none
-        /// 6h–1d projected dead time on the other window.
+        /// Other window's pace ratio in 110–130% — heads up, it just
+        /// crossed into the gauge's red zone.
         case terracotta
-        /// > 1d projected dead time on the other window.
+        /// Other window's pace ratio above 130% — severe overshoot,
+        /// well into the red zone.
         case red
 
         /// Map a `Projection` for the *non-tracked* window into a severity.
+        /// Aligned with the gauge body's 110% red trigger so the dot lights
+        /// up exactly when the other window's gauge would be red.
         init(forNonTracked projection: Projection?) {
             guard let p = projection else { self = .none; return }
-            switch p.outcome {
-            case .overPace(let dt) where dt > 86_400:
-                self = .red
-            case .overPace(let dt) where dt > 6 * 3_600:
-                self = .terracotta
-            default:
-                self = .none
-            }
+            if p.paceRatio > 1.30 { self = .red }
+            else if p.paceRatio > 1.10 { self = .terracotta }
+            else { self = .none }
         }
     }
 

@@ -18,13 +18,6 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section("Menu Bar") {
-                Picker("Display", selection: $settings.displayMode) {
-                    Text("Vessel").tag(DisplayMode.vessel)
-                    Text("Pacing").tag(DisplayMode.pacing)
-                    Text("Numeric").tag(DisplayMode.numeric)
-                }
-                .pickerStyle(.segmented)
-
                 Picker("Tracked window", selection: $settings.trackedWindow) {
                     Text("5 hours").tag(TrackedWindow.fiveHour)
                     Text("7 days").tag(TrackedWindow.sevenDay)
@@ -61,7 +54,10 @@ struct SettingsView: View {
         // Default macOS behavior desaturates these to gray when the window
         // is non-key, which makes "On" toggles look identical to "Off."
         .environment(\.controlActiveState, .key)
-        .frame(width: 480, height: debugVisible || debug.enabled ? 880 : 560)
+        .frame(
+            width: debugVisible || debug.enabled ? 580 : 480,
+            height: debugVisible || debug.enabled ? 880 : 560
+        )
         .background(
             // Invisible button registers ⌥⌘⇧D as the reveal shortcut.
             Button("") { debugVisible.toggle() }
