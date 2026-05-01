@@ -48,6 +48,22 @@ enum DurationFormatter {
         return "\(pluralize(d, "day")), \(pluralize(h, "hour"))"
     }
 
+    /// Single-unit, single-precision rendering. Picks the largest whole
+    /// unit that the duration crosses and rounds to the nearest one — no
+    /// secondary component. Useful for status lines where extra
+    /// precision would clutter ("Burnout projected 2 days early" reads
+    /// cleaner than "Burnout projected 2 days, 3 hours early").
+    static func coarse(_ seconds: TimeInterval) -> String {
+        let s = max(0, seconds)
+        if s < 3600 {
+            return pluralize(Int((s / 60).rounded()), "minute")
+        }
+        if s <= 48 * 3600 {
+            return pluralize(Int((s / 3600).rounded()), "hour")
+        }
+        return pluralize(Int((s / 86400).rounded()), "day")
+    }
+
     private static func pluralize(_ n: Int, _ unit: String) -> String {
         "\(n) \(unit)\(n == 1 ? "" : "s")"
     }

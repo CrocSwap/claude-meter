@@ -7,43 +7,13 @@ struct ProjectorTests {
 
     static let now = Date(timeIntervalSince1970: 1_777_577_933)
     static let fiveHourDuration: TimeInterval = 5 * 3600
-    static let fiveHourHalfLife: TimeInterval = 1 * 3600
+    static let sevenDayDuration: TimeInterval = 7 * 86400
 
-    /// Build a buffer of `count` evenly-spaced samples ending `endingAt`,
-    /// where utilization climbs linearly from `start` to `end`.
-    static func ramp(
-        from start: Double,
-        to end: Double,
-        count: Int,
-        spacing: TimeInterval = 60,
-        endingAt endTime: Date = ProjectorTests.now.addingTimeInterval(-30)
-    ) -> [UsageSample] {
-        (0..<count).map { i in
-            let frac = count > 1 ? Double(i) / Double(count - 1) : 0
-            let util = start + (end - start) * frac
-            let t = endTime.addingTimeInterval(-Double(count - 1 - i) * spacing)
-            return UsageSample(timestamp: t, utilization: util)
-        }
-    }
-
-    @Test("Below 10% utilization → nil")
-    func belowMinimumUtilization() {
-        let window = UsageWindow(utilization: 5, resetsAt: Self.now.addingTimeInterval(3600))
-        let samples = Self.ramp(from: 0, to: 5, count: 10)
-        let p = Projector.project(window: window, samples: samples,
+    @Test("Zero utilization → nil")
+    func zeroUtilization() {
+        let window = UsageWindow(utilization: 0, resetsAt: Self.now.addingTimeInterval(3600))
+        let p = Projector.project(window: window,
                                   windowDuration: Self.fiveHourDuration,
-                                  halfLife: Self.fiveHourHalfLife,
-                                  now: Self.now)
-        #expect(p == nil)
-    }
-
-    @Test("Fewer than 5 samples → nil")
-    func belowMinimumSamples() {
-        let window = UsageWindow(utilization: 40, resetsAt: Self.now.addingTimeInterval(3600))
-        let samples = Self.ramp(from: 30, to: 40, count: 4)
-        let p = Projector.project(window: window, samples: samples,
-                                  windowDuration: Self.fiveHourDuration,
-                                  halfLife: Self.fiveHourHalfLife,
                                   now: Self.now)
         #expect(p == nil)
     }
@@ -51,136 +21,114 @@ struct ProjectorTests {
     @Test("Missing resetsAt → nil")
     func missingResetsAt() {
         let window = UsageWindow(utilization: 40, resetsAt: nil)
-        let samples = Self.ramp(from: 30, to: 40, count: 10)
-        let p = Projector.project(window: window, samples: samples,
+        let p = Projector.project(window: window,
                                   windowDuration: Self.fiveHourDuration,
-                                  halfLife: Self.fiveHourHalfLife,
                                   now: Self.now)
         #expect(p == nil)
     }
 
-    @Test("Idle / non-positive burn rate → nil")
-    func idleBurnRate() {
-        let window = UsageWindow(utilization: 40, resetsAt: Self.now.addingTimeInterval(3600))
-        let samples = Self.ramp(from: 40, to: 40, count: 10)
-        let p = Projector.project(window: window, samples: samples,
+    @Test("Reset already passed → nil")
+    func resetInPast() {
+        let window = UsageWindow(utilization: 40, resetsAt: Self.now.addingTimeInterval(-60))
+        let p = Projector.project(window: window,
                                   windowDuration: Self.fiveHourDuration,
-                                  halfLife: Self.fiveHourHalfLife,
                                   now: Self.now)
         #expect(p == nil)
     }
 
-    @Test("Heavy burn over short remaining → over-pace with measurable dead time")
-    func overPaceClassification() {
-        // 5h window, 2h elapsed, 3h remaining, currently at 80%.
-        // Expected at this point ≈ 40%, paceRatio ≈ 2.0.
-        // Burn 0→80 in ~10 min → very high rate → projection well above 100.
-        let resetsAt = Self.now.addingTimeInterval(3 * 3600)
-        let window = UsageWindow(utilization: 80, resetsAt: resetsAt)
-        let samples = Self.ramp(from: 0, to: 80, count: 10)
-        guard let p = Projector.project(window: window, samples: samples,
+    @Test("Window hasn't started yet (no elapsed time) → nil")
+    func noElapsedTime() {
+        // resetsAt is exactly windowDuration in the future → elapsed = 0.
+        let window = UsageWindow(utilization: 1, resetsAt: Self.now.addingTimeInterval(Self.fiveHourDuration))
+        let p = Projector.project(window: window,
+                                  windowDuration: Self.fiveHourDuration,
+                                  now: Self.now)
+        #expect(p == nil)
+    }
+
+    @Test("On-pace: 50% used at 50% elapsed → ratio 1.0, outcome .onPace")
+    func onPace() {
+        // 5h window, 2.5h elapsed (2.5h until reset), 50% used.
+        // Linear projection lands at 100%, well within ±5pp band.
+        let window = UsageWindow(utilization: 50, resetsAt: Self.now.addingTimeInterval(2.5 * 3600))
+        guard let p = Projector.project(window: window,
                                         windowDuration: Self.fiveHourDuration,
-                                        halfLife: Self.fiveHourHalfLife,
                                         now: Self.now) else {
             Issue.record("expected non-nil projection")
             return
         }
+        #expect(abs(p.paceRatio - 1.0) < 0.001)
+        #expect(p.outcome == Projection.Outcome.onPace)
+    }
+
+    @Test("Over-pace: 80% used at 40% elapsed → ratio 2.0, dead time 2.5h")
+    func overPace() {
+        // 5h window, 2h elapsed (3h until reset), 80% used.
+        // Burn rate = 40 pp/h; hits 100% in 0.5h; dead time = 3 - 0.5 = 2.5h.
+        let window = UsageWindow(utilization: 80, resetsAt: Self.now.addingTimeInterval(3 * 3600))
+        guard let p = Projector.project(window: window,
+                                        windowDuration: Self.fiveHourDuration,
+                                        now: Self.now) else {
+            Issue.record("expected non-nil projection")
+            return
+        }
+        #expect(abs(p.paceRatio - 2.0) < 0.001)
         if case .overPace(let deadTime) = p.outcome {
-            #expect(deadTime > 0)
+            #expect(abs(deadTime - 2.5 * 3600) < 1)
         } else {
             Issue.record("expected overPace outcome")
         }
-        #expect(p.confidence == Projection.Confidence.full)
-        #expect(p.paceRatio > 1.5)
     }
 
-    @Test("Light burn over long remaining → under-pace with unused capacity")
-    func underPaceClassification() {
-        // 7d window, 5d remaining, currently at 20%.
-        // Burn 0→20 over 1.67h (10 samples × 600s spacing). Slow projected slope.
-        let sevenDayDuration: TimeInterval = 7 * 86400
-        let resetsAt = Self.now.addingTimeInterval(5 * 86400)
-        let window = UsageWindow(utilization: 20, resetsAt: resetsAt)
-        let samples = Self.ramp(from: 19.97, to: 20, count: 10, spacing: 600)
-        guard let p = Projector.project(window: window, samples: samples,
-                                        windowDuration: sevenDayDuration,
-                                        halfLife: 6 * 3600,
+    @Test("Under-pace: 10% used at 50% elapsed → ratio 0.2, unused fraction 0.8")
+    func underPace() {
+        // 5h window, 2.5h elapsed (2.5h until reset), 10% used.
+        // Linear projection lands at 20% — 80% unused.
+        let window = UsageWindow(utilization: 10, resetsAt: Self.now.addingTimeInterval(2.5 * 3600))
+        guard let p = Projector.project(window: window,
+                                        windowDuration: Self.fiveHourDuration,
                                         now: Self.now) else {
             Issue.record("expected non-nil projection")
             return
         }
+        #expect(abs(p.paceRatio - 0.2) < 0.001)
         if case .underPace(let unusedFraction, let unusedTime) = p.outcome {
-            #expect(unusedFraction > 0)
-            #expect(unusedFraction < 1)
+            #expect(abs(unusedFraction - 0.8) < 0.001)
             #expect(unusedTime > 0)
         } else {
             Issue.record("expected underPace outcome")
         }
-        #expect(p.paceRatio < 1)
     }
 
-    @Test("On-pace band collapses outcome to .onPace")
-    func onPaceClassification() {
-        // 5h window, 2.5h elapsed (so 2.5h remaining), currently at 50%.
-        // Burn rate ramp from 49.99 → 50 means EWMA ≈ pace-implied rate of
-        // 50 / (2.5h) → projected at reset ≈ 100 → in the on-pace band.
-        let resetsAt = Self.now.addingTimeInterval(2.5 * 3600)
-        let window = UsageWindow(utilization: 50, resetsAt: resetsAt)
-        let burnPerSec = 50.0 / (2.5 * 3600)
-        let samples = (0..<10).map { i -> UsageSample in
-            let t = Self.now.addingTimeInterval(-Double(9 - i) * 60 - 30)
-            // Reverse-fill samples consistent with the burn-per-sec rate
-            let util = 50.0 - burnPerSec * Double(9 - i) * 60
-            return UsageSample(timestamp: t, utilization: util)
-        }
-        guard let p = Projector.project(window: window, samples: samples,
+    @Test("Just over the on-pace band still classifies as overPace")
+    func justOverBand() {
+        // Project to ~106% — outside the ±5pp band.
+        // 5h window, 2.5h elapsed, 53% used → projects to 106%.
+        let window = UsageWindow(utilization: 53, resetsAt: Self.now.addingTimeInterval(2.5 * 3600))
+        guard let p = Projector.project(window: window,
                                         windowDuration: Self.fiveHourDuration,
-                                        halfLife: Self.fiveHourHalfLife,
                                         now: Self.now) else {
             Issue.record("expected non-nil projection")
             return
         }
+        if case .overPace = p.outcome {
+            // expected
+        } else {
+            Issue.record("expected overPace outcome, got \(p.outcome)")
+        }
+    }
+
+    @Test("Weekly window: 50% used at 50% elapsed → on pace")
+    func weeklyOnPace() {
+        // 7d window, 3.5d elapsed (3.5d until reset), 50% used.
+        let window = UsageWindow(utilization: 50, resetsAt: Self.now.addingTimeInterval(3.5 * 86400))
+        guard let p = Projector.project(window: window,
+                                        windowDuration: Self.sevenDayDuration,
+                                        now: Self.now) else {
+            Issue.record("expected non-nil projection")
+            return
+        }
+        #expect(abs(p.paceRatio - 1.0) < 0.001)
         #expect(p.outcome == Projection.Outcome.onPace)
-    }
-
-    @Test("Low confidence band — utilization 10–25% gets .low")
-    func lowConfidence() {
-        // 5h window, 4h remaining, currently at 18% — under pace.
-        let resetsAt = Self.now.addingTimeInterval(4 * 3600)
-        let window = UsageWindow(utilization: 18, resetsAt: resetsAt)
-        let samples = Self.ramp(from: 17.95, to: 18, count: 10)
-        guard let p = Projector.project(window: window, samples: samples,
-                                        windowDuration: Self.fiveHourDuration,
-                                        halfLife: Self.fiveHourHalfLife,
-                                        now: Self.now) else {
-            Issue.record("expected non-nil projection")
-            return
-        }
-        #expect(p.confidence == Projection.Confidence.low)
-    }
-
-    @Test("EWMA returns nil for fewer than two samples")
-    func ewmaInsufficientSamples() {
-        #expect(Projector.ewmaBurnRate(samples: [], halfLife: 3600, now: Self.now) == nil)
-        let one = [UsageSample(timestamp: Self.now, utilization: 10)]
-        #expect(Projector.ewmaBurnRate(samples: one, halfLife: 3600, now: Self.now) == nil)
-    }
-
-    @Test("EWMA computes a constant rate correctly")
-    func ewmaConstantRate() {
-        // 11 samples over 600s, util climbing 0→60. Constant rate = 0.1 pp/s.
-        let samples = (0..<11).map { i in
-            UsageSample(
-                timestamp: Self.now.addingTimeInterval(-Double(10 - i) * 60),
-                utilization: Double(i) * 6
-            )
-        }
-        let rate = Projector.ewmaBurnRate(samples: samples,
-                                          halfLife: 3600,
-                                          now: Self.now)
-        #expect(rate != nil)
-        if let rate {
-            #expect(abs(rate - 0.1) < 0.001)
-        }
     }
 }

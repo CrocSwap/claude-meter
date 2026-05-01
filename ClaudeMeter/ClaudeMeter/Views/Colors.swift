@@ -39,4 +39,24 @@ extension Color {
             ? NSColor(red: 0xFF / 255, green: 0xD6 / 255, blue: 0x0A / 255, alpha: 1)
             : NSColor(red: 0xFF / 255, green: 0xCC / 255, blue: 0x00 / 255, alpha: 1)
     })
+
+    /// Muted slate gray for the under-pace zone of radial pacing gauges.
+    /// Communicates "fine, just FYI" without being invisible against the
+    /// popover background.
+    static let pacingSlate = Color(nsColor: NSColor(name: nil) { appearance in
+        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        return isDark
+            ? NSColor(red: 0x6B / 255, green: 0x72 / 255, blue: 0x80 / 255, alpha: 1)
+            : NSColor(red: 0x4A / 255, green: 0x55 / 255, blue: 0x68 / 255, alpha: 1)
+    })
+
+    /// Amber that anchors the start of the over-pace gradient on radial
+    /// pacing gauges. Pairs with `criticalRed` to span the 100–150% danger
+    /// zone — gradient escalates urgency as the needle moves further right.
+    static let pacingAmber = Color(nsColor: NSColor(name: nil) { appearance in
+        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        return isDark
+            ? NSColor(red: 0xF5 / 255, green: 0x9E / 255, blue: 0x0B / 255, alpha: 1)
+            : NSColor(red: 0xD9 / 255, green: 0x77 / 255, blue: 0x06 / 255, alpha: 1)
+    })
 }

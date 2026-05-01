@@ -135,9 +135,7 @@ struct MenuBarLabel: View {
     // MARK: - Pacing-mode label
 
     private var pacingText: String {
-        guard let util = trackedUtil,
-              util >= Projector.minimumUtilization,
-              let projection = trackedProjection else { return "—" }
+        guard let projection = trackedProjection else { return "—" }
         let pace = projection.paceRatio
         if pace >= 0.95 && pace <= 1.05 {
             return "on pace"

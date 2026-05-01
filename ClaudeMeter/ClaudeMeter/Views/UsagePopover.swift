@@ -26,16 +26,24 @@ struct UsagePopover: View {
 
             Divider()
 
-            VStack(alignment: .leading, spacing: 6) {
-                utilizationRow(label: "Session Token Utilization", window: displaySnapshot?.fiveHour)
-                utilizationRow(label: "Weekly Token Utilization", window: displaySnapshot?.sevenDay)
-            }
-
-            if let message = signInMessage {
-                Text(message)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .lineLimit(3)
+            VStack(spacing: 10) {
+                HStack(alignment: .top, spacing: 16) {
+                    RadialPacingGauge(
+                        label: "Session",
+                        projection: displayProjection(for: .fiveHour)
+                    )
+                    RadialPacingGauge(
+                        label: "Weekly",
+                        projection: displayProjection(for: .sevenDay)
+                    )
+                }
+                if let status = pacingStatus {
+                    Text(status.text)
+                        .font(.footnote)
+                        .foregroundStyle(status.color)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity)
+                }
             }
 
             Divider()
@@ -44,13 +52,20 @@ struct UsagePopover: View {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     VStack(alignment: .leading, spacing: 2) {
                         Text(footerText(now: context.date))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                         if displayApiUnavailable {
                             Text("API currently unavailable")
+                                .font(.caption2)
                                 .foregroundStyle(.red)
                         }
+                        if let message = signInMessage {
+                            Text(message)
+                                .font(.caption2)
+                                .foregroundStyle(.red)
+                                .lineLimit(3)
+                        }
                     }
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
                 }
                 Spacer()
                 SettingsLink {
@@ -79,31 +94,6 @@ struct UsagePopover: View {
         .frame(width: 280)
     }
 
-    @ViewBuilder
-    private func utilizationRow(label: String, window: UsageWindow?) -> some View {
-        HStack {
-            Text(label)
-                .font(.subheadline)
-                .foregroundStyle(.primary)
-            Spacer()
-            Text(utilizationText(for: window))
-                .font(.subheadline.monospacedDigit())
-                .foregroundStyle(utilizationColor(for: window))
-        }
-    }
-
-    private func utilizationText(for window: UsageWindow?) -> String {
-        guard let w = window else { return "—" }
-        return "\(Int(w.utilization.rounded()))%"
-    }
-
-    private func utilizationColor(for window: UsageWindow?) -> Color {
-        guard let w = window else { return .secondary }
-        if w.utilization > 100 { return .criticalRed }
-        if w.utilization >= 85 { return .usageYellow }
-        return .primary
-    }
-
     /// Snapshot the views should render — debug override if enabled, real
     /// store data otherwise.
     private var displaySnapshot: UsageSnapshot? {
@@ -111,9 +101,98 @@ struct UsagePopover: View {
     }
 
     private func displayProjection(for window: TrackedWindow) -> Projection? {
-        settings.debug.enabled
-            ? settings.debug.syntheticProjection(for: window)
-            : store.projection(for: window)
+        if settings.debug.enabled {
+            if let synthetic = settings.debug.syntheticProjection(for: window) {
+                return synthetic
+            }
+            // Debug "No projection" outcome — fall back to a snapshot-
+            // derived pace ratio so the gauges still have something to
+            // render. The "No projection" option survives from the old
+            // bars UI that relied on an explicit suppression state; the
+            // gauges don't have an equivalent "off" mode.
+            return snapshotProjection(for: window, snapshot: displaySnapshot)
+        }
+        return store.projection(for: window)
+    }
+
+    private func snapshotProjection(for window: TrackedWindow, snapshot: UsageSnapshot?) -> Projection? {
+        guard let snapshot else { return nil }
+        switch window {
+        case .fiveHour:
+            guard let w = snapshot.fiveHour else { return nil }
+            return Projector.project(window: w, windowDuration: UsageStore.fiveHourDuration)
+        case .sevenDay:
+            guard let w = snapshot.sevenDay else { return nil }
+            return Projector.project(window: w, windowDuration: UsageStore.sevenDayDuration)
+        }
+    }
+
+    // MARK: - Pacing status sentence
+
+    /// Single status line shown beneath both gauges. Picks the message
+    /// based on which zone each pacing ratio falls into:
+    /// - both `< 85%` → under-utilized advice
+    /// - any `85–110%` → on-target affirmation
+    /// - any `> 110%` → burnout warning, naming the offending window
+    ///   (Weekly takes precedence when both are over).
+    private var pacingStatus: PacingStatusMessage? {
+        let session = displayProjection(for: .fiveHour)
+        let weekly = displayProjection(for: .sevenDay)
+        let sessionZone = pacingZone(session)
+        let weeklyZone = pacingZone(weekly)
+
+        if weeklyZone == .over, let p = weekly {
+            return .burnout(label: "Weekly", deadTime: deadTime(of: p))
+        }
+        if sessionZone == .over, let p = session {
+            return .burnout(label: "Session", deadTime: deadTime(of: p))
+        }
+        if sessionZone == .target || weeklyZone == .target {
+            return .onTarget
+        }
+        if sessionZone == .under && weeklyZone == .under {
+            return .underUtilized
+        }
+        return nil
+    }
+
+    private enum PacingZone { case under, target, over, unknown }
+
+    private func pacingZone(_ p: Projection?) -> PacingZone {
+        guard let p else { return .unknown }
+        if p.paceRatio < 0.85 { return .under }
+        if p.paceRatio <= 1.10 { return .target }
+        return .over
+    }
+
+    private func deadTime(of projection: Projection) -> TimeInterval {
+        if case .overPace(let dt) = projection.outcome { return dt }
+        return 0
+    }
+
+    enum PacingStatusMessage {
+        case underUtilized
+        case onTarget
+        case burnout(label: String, deadTime: TimeInterval)
+
+        var text: String {
+            switch self {
+            case .underUtilized:
+                return "Under utilized. Use more tokens."
+            case .onTarget:
+                return "On target. Maintain token spend."
+            case .burnout(let label, let dt):
+                return "\(label) burnout projected \(DurationFormatter.coarse(dt)) early. Reduce token spend."
+            }
+        }
+
+        var color: Color {
+            switch self {
+            case .underUtilized: return .secondary
+            case .onTarget: return .usageGreen
+            case .burnout: return .criticalRed
+            }
+        }
     }
 
     private func footerText(now: Date) -> String {
