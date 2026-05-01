@@ -4,6 +4,7 @@ import SwiftUI
 struct ClaudeMeterApp: App {
     @State private var store: UsageStore
     @State private var launchAtLogin: LaunchAtLogin
+    @State private var settings: AppSettings
     @State private var poller: UsagePoller
 
     init() {
@@ -14,6 +15,7 @@ struct ClaudeMeterApp: App {
         )
         _store = State(initialValue: store)
         _launchAtLogin = State(initialValue: LaunchAtLogin())
+        _settings = State(initialValue: AppSettings())
         _poller = State(initialValue: poller)
         Task { await poller.start() }
     }
@@ -22,18 +24,19 @@ struct ClaudeMeterApp: App {
         MenuBarExtra {
             UsagePopover(
                 store: store,
-                launchAtLogin: launchAtLogin,
+                settings: settings,
                 onRefresh: { Task { await poller.refreshNow() } },
                 onQuit: { NSApplication.shared.terminate(nil) }
             )
             .onAppear { Task { await poller.setPopoverOpen(true) } }
             .onDisappear { Task { await poller.setPopoverOpen(false) } }
         } label: {
-            MenuBarLabel(
-                snapshot: store.snapshot,
-                hasError: store.lastError != nil
-            )
+            MenuBarLabel(store: store, settings: settings)
         }
         .menuBarExtraStyle(.window)
+
+        Settings {
+            SettingsView(settings: settings, launchAtLogin: launchAtLogin)
+        }
     }
 }

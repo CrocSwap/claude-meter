@@ -1,11 +1,15 @@
 import SwiftUI
 
-/// Reusable horizontal progress bar for one usage window. Renders as a bar
-/// at AGENTS.md-spec colors (green <60, amber 60-85, red >85), with a
-/// subtitle showing the percentage and reset countdown.
+/// Reusable horizontal progress bar for one usage window. Renders monochrome
+/// (system primary color, template-tinted by macOS) below 85% utilization
+/// and `Color.criticalRed` at/above. Fill level alone carries the warning in
+/// the 60–85% range — see `docs/brand.md`. Subtitle shows the percentage and
+/// reset countdown, with an optional projection annotation underneath.
 struct UsageBar: View {
     let title: String
     let window: UsageWindow?
+    var projection: Projection? = nil
+    var showUnderPaceAnnotation: Bool = true
     var now: Date = Date()
 
     var body: some View {
@@ -24,7 +28,7 @@ struct UsageBar: View {
                     RoundedRectangle(cornerRadius: 3)
                         .fill(Color.secondary.opacity(0.15))
                     RoundedRectangle(cornerRadius: 3)
-                        .fill(threshold.color)
+                        .fill(fillColor)
                         .frame(width: max(0, min(1, fillFraction)) * geo.size.width)
                 }
             }
@@ -32,6 +36,12 @@ struct UsageBar: View {
             Text(resetText)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+            if let line = annotationText {
+                Text(line)
+                    .font(.caption2)
+                    .foregroundStyle(annotationColor)
+                    .fontWeight(annotationWeight)
+            }
         }
     }
 
@@ -45,9 +55,12 @@ struct UsageBar: View {
         return String(format: "%.0f%%", u)
     }
 
-    private var threshold: Threshold {
-        guard let u = window?.utilization else { return .neutral }
-        return Threshold(utilization: u)
+    private var fillColor: Color {
+        switch Threshold(utilization: window?.utilization) {
+        case .critical: return .criticalRed
+        case .normal: return .primary
+        case .neutral: return .clear
+        }
     }
 
     private var resetText: String {
@@ -56,35 +69,43 @@ struct UsageBar: View {
         }
         let interval = resetsAt.timeIntervalSince(now)
         if interval <= 0 { return "resets now" }
-        return "resets in \(Self.formatInterval(interval))"
+        return "resets in \(DurationFormatter.compact(interval))"
     }
 
-    private static func formatInterval(_ seconds: TimeInterval) -> String {
-        let formatter = DateComponentsFormatter()
-        formatter.unitsStyle = .abbreviated
-        formatter.maximumUnitCount = 2
-        formatter.allowedUnits = [.day, .hour, .minute]
-        return formatter.string(from: seconds) ?? "—"
-    }
-}
-
-enum Threshold {
-    case neutral, low, medium, high
-
-    init(utilization: Double) {
-        switch utilization {
-        case ..<60: self = .low
-        case 60..<85: self = .medium
-        default: self = .high
+    /// The annotation line beneath the reset countdown — projected dead
+    /// time for over-pace, or unused capacity for under-pace. Returns
+    /// `nil` when there's nothing to say (no projection, on-pace outcome,
+    /// or under-pace with the user's annotation suppressed).
+    private var annotationText: String? {
+        guard let projection else { return nil }
+        let approx = projection.confidence == .low ? "~" : ""
+        switch projection.outcome {
+        case .onPace:
+            return nil
+        case .overPace(let deadTime):
+            return "locked out \(approx)\(DurationFormatter.compact(deadTime)) before reset"
+        case .underPace(let unusedFraction, _):
+            guard showUnderPaceAnnotation else { return nil }
+            let pct = Int((unusedFraction * 100).rounded())
+            return "\(approx)\(pct)% unused at reset"
         }
     }
 
-    var color: Color {
-        switch self {
-        case .neutral: return .secondary
-        case .low: return .green
-        case .medium: return .orange
-        case .high: return .red
+    private var annotationColor: Color {
+        guard let projection else { return .secondary }
+        switch projection.outcome {
+        case .overPace(let deadTime):
+            return deadTime >= 86_400 ? .criticalRed : .primary
+        case .underPace, .onPace:
+            return .secondary
+        }
+    }
+
+    private var annotationWeight: Font.Weight {
+        guard let projection else { return .regular }
+        switch projection.outcome {
+        case .overPace: return .semibold
+        case .underPace, .onPace: return .regular
         }
     }
 }
@@ -109,6 +130,32 @@ enum Threshold {
     UsageBar(title: "5 hours",
              window: UsageWindow(utilization: 92.0,
                                  resetsAt: Date().addingTimeInterval(45 * 60)))
+        .padding()
+        .frame(width: 280)
+}
+
+#Preview("Over pace") {
+    UsageBar(title: "7 days",
+             window: UsageWindow(utilization: 78.0,
+                                 resetsAt: Date().addingTimeInterval(2 * 86400)),
+             projection: Projection(
+                paceRatio: 1.4,
+                confidence: .full,
+                outcome: .overPace(deadTime: 6 * 3600)
+             ))
+        .padding()
+        .frame(width: 280)
+}
+
+#Preview("Under pace") {
+    UsageBar(title: "7 days",
+             window: UsageWindow(utilization: 28.0,
+                                 resetsAt: Date().addingTimeInterval(4 * 86400)),
+             projection: Projection(
+                paceRatio: 0.6,
+                confidence: .full,
+                outcome: .underPace(unusedFraction: 0.30, unusedTime: 12 * 3600)
+             ))
         .padding()
         .frame(width: 280)
 }

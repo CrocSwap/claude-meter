@@ -5,14 +5,24 @@ import SwiftUI
 /// passing in callbacks for refresh / quit / sign-out actions.
 struct UsagePopover: View {
     let store: UsageStore
-    let launchAtLogin: LaunchAtLogin
+    let settings: AppSettings
     let onRefresh: () -> Void
     let onQuit: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            UsageBar(title: "5 hours", window: store.snapshot?.fiveHour)
-            UsageBar(title: "7 days", window: store.snapshot?.sevenDay)
+            UsageBar(
+                title: "5 hours",
+                window: store.snapshot?.fiveHour,
+                projection: store.projection(for: .fiveHour),
+                showUnderPaceAnnotation: settings.showUnderPaceAnnotation
+            )
+            UsageBar(
+                title: "7 days",
+                window: store.snapshot?.sevenDay,
+                projection: store.projection(for: .sevenDay),
+                showUnderPaceAnnotation: settings.showUnderPaceAnnotation
+            )
 
             if let message = errorMessage {
                 Text(message)
@@ -23,11 +33,16 @@ struct UsagePopover: View {
 
             Divider()
 
-            HStack {
+            HStack(spacing: 8) {
                 Text(footerText)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                 Spacer()
+                SettingsLink {
+                    Image(systemName: "gearshape")
+                }
+                .buttonStyle(.borderless)
+                .help("Settings…")
                 Button {
                     onRefresh()
                 } label: {
@@ -36,14 +51,6 @@ struct UsagePopover: View {
                 .buttonStyle(.borderless)
                 .help("Refresh now")
             }
-
-            Toggle("Launch at login", isOn: Binding(
-                get: { launchAtLogin.isEnabled },
-                set: { launchAtLogin.setEnabled($0) }
-            ))
-            .toggleStyle(.switch)
-            .controlSize(.mini)
-            .font(.caption)
 
             HStack {
                 Spacer()
@@ -115,12 +122,12 @@ struct UsagePopover: View {
         sevenDay: UsageWindow(utilization: 65.0,
                               resetsAt: Date().addingTimeInterval(2 * 86400))
     ))
-    return UsagePopover(store: store, launchAtLogin: LaunchAtLogin(), onRefresh: {}, onQuit: {})
+    return UsagePopover(store: store, settings: AppSettings(), onRefresh: {}, onQuit: {})
 }
 
 #Preview("Loading") {
     let store = UsageStore()
-    return UsagePopover(store: store, launchAtLogin: LaunchAtLogin(), onRefresh: {}, onQuit: {})
+    return UsagePopover(store: store, settings: AppSettings(), onRefresh: {}, onQuit: {})
 }
 
 #Preview("Network error with stale snapshot") {
@@ -132,5 +139,5 @@ struct UsagePopover: View {
                               resetsAt: Date().addingTimeInterval(2 * 86400))
     ), at: Date().addingTimeInterval(-15 * 60))
     store.recordError(.api(.network(underlying: URLError(.notConnectedToInternet))))
-    return UsagePopover(store: store, launchAtLogin: LaunchAtLogin(), onRefresh: {}, onQuit: {})
+    return UsagePopover(store: store, settings: AppSettings(), onRefresh: {}, onQuit: {})
 }
