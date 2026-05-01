@@ -17,25 +17,6 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Section("Menu Bar") {
-                Picker("Tracked window", selection: $settings.trackedWindow) {
-                    Text("5 hours").tag(TrackedWindow.fiveHour)
-                    Text("7 days").tag(TrackedWindow.sevenDay)
-                }
-                .pickerStyle(.segmented)
-            }
-
-            Section {
-                Toggle("Show under-pace info in popover", isOn: $settings.showUnderPaceAnnotation)
-                    .toggleStyle(.switch)
-            } header: {
-                Text("Annotations")
-            } footer: {
-                Text("Shows projected unused capacity when you're tracking below pace.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
             Section("Startup") {
                 Toggle("Launch at login", isOn: Binding(
                     get: { launchAtLogin.isEnabled },

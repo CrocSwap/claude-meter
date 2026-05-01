@@ -10,7 +10,6 @@ struct UsageBar: View {
     let title: String
     let window: UsageWindow?
     var projection: Projection? = nil
-    var showUnderPaceAnnotation: Bool = true
     var now: Date = Date()
 
     var body: some View {
@@ -79,11 +78,10 @@ struct UsageBar: View {
     /// Annotation line beneath the reset countdown. Over-pace dead time
     /// is communicated by the radial gauge's status sentence in the
     /// popover, so this slot is reserved for under-pace "unused at reset"
-    /// info — and only when the user has it enabled.
+    /// info.
     private var annotationText: String? {
         guard let projection else { return nil }
-        guard showUnderPaceAnnotation,
-              case .underPace(let unusedFraction, _) = projection.outcome else {
+        guard case .underPace(let unusedFraction, _) = projection.outcome else {
             return nil
         }
         let approx = projection.confidence == .low ? "~" : ""

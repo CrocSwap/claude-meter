@@ -24,14 +24,12 @@ struct UsagePopover: View {
             UsageBar(
                 title: "Session",
                 window: displaySnapshot?.fiveHour,
-                projection: displayProjection(for: .fiveHour),
-                showUnderPaceAnnotation: settings.showUnderPaceAnnotation
+                projection: displayProjection(for: .fiveHour)
             )
             UsageBar(
                 title: "Weekly",
                 window: displaySnapshot?.sevenDay,
-                projection: displayProjection(for: .sevenDay),
-                showUnderPaceAnnotation: settings.showUnderPaceAnnotation
+                projection: displayProjection(for: .sevenDay)
             )
 
             Divider()

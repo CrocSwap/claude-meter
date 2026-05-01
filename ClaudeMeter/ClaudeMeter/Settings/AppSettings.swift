@@ -30,10 +30,6 @@ final class AppSettings {
         didSet { defaults.set(trackedWindow.rawValue, forKey: Keys.trackedWindow) }
     }
 
-    var showUnderPaceAnnotation: Bool {
-        didSet { defaults.set(showUnderPaceAnnotation, forKey: Keys.showUnderPaceAnnotation) }
-    }
-
     /// Hidden developer overrides — see `DebugSettings`. Only the settings
     /// panel (gated by ⌥⌘⇧D) reads/writes this; runtime views just check
     /// `debug.enabled` and substitute synthesized values when true.
@@ -62,17 +58,11 @@ final class AppSettings {
         if defaults.object(forKey: Keys.showPercentInMenuBar) != nil {
             self.showPercentInMenuBar = defaults.bool(forKey: Keys.showPercentInMenuBar)
         } else {
-            self.showPercentInMenuBar = false
+            self.showPercentInMenuBar = true
         }
 
         let windowRaw = defaults.string(forKey: Keys.trackedWindow) ?? TrackedWindow.fiveHour.rawValue
         self.trackedWindow = TrackedWindow(rawValue: windowRaw) ?? .fiveHour
-
-        if defaults.object(forKey: Keys.showUnderPaceAnnotation) != nil {
-            self.showUnderPaceAnnotation = defaults.bool(forKey: Keys.showUnderPaceAnnotation)
-        } else {
-            self.showUnderPaceAnnotation = true
-        }
 
         self.debug = DebugSettings(defaults: defaults)
     }
@@ -82,6 +72,5 @@ final class AppSettings {
         static let showPacingInMenuBar = "showPacingInMenuBar"
         static let showPercentInMenuBar = "showPercentInMenuBar"
         static let trackedWindow = "trackedWindow"
-        static let showUnderPaceAnnotation = "showUnderPaceAnnotation"
     }
 }
