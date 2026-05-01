@@ -4,10 +4,6 @@ A macOS menu bar app that displays Claude subscription usage.
 
 ![Claude Meter showing the menu bar gauge and popover open on a normal desktop](assets/screenshots/hero.png)
 
-When you're on pace to hit the wall before the window resets, the popover surfaces it directly:
-
-![Popover in burnout state, with the Weekly dial in the red zone and the status line warning that limits will hit in six hours](assets/screenshots/burnout.png)
-
 ## Requirements
 
 - macOS 14 (Sonoma) or newer
