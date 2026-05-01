@@ -36,6 +36,7 @@ struct UsagePopover: View {
 
             Divider()
 
+            sectionTitle("PACING")
             VStack(spacing: 10) {
                 HStack(alignment: .top, spacing: 16) {
                     RadialPacingGauge(
@@ -63,6 +64,16 @@ struct UsagePopover: View {
             Divider()
 
             VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 12) {
+                    Text("Menubar")
+                    Picker("", selection: trackedWindowBinding) {
+                        Text("Session").tag(TrackedWindow.fiveHour)
+                        Text("Weekly").tag(TrackedWindow.sevenDay)
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.radioGroup)
+                    .horizontalRadioGroupLayout()
+                }
                 Toggle("Show Usage in Menubar", isOn: showUsageBinding)
                     .toggleStyle(.checkbox)
                     .disabled(onlyUsageChecked)
@@ -122,6 +133,16 @@ struct UsagePopover: View {
         .frame(width: 280)
     }
 
+    /// Small uppercase header for the popover sections — same caption2/
+    /// semibold weight as the per-row "SESSION"/"WEEKLY" labels so the
+    /// hierarchy reads as "section header → row label."
+    @ViewBuilder
+    private func sectionTitle(_ text: String) -> some View {
+        Text(text)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.secondary)
+    }
+
     // MARK: - Menu-bar visibility checkboxes
 
     /// True when only the usage box is checked — disables it so the user
@@ -164,6 +185,13 @@ struct UsagePopover: View {
         Binding(
             get: { settings.showPercentInMenuBar },
             set: { settings.showPercentInMenuBar = $0 }
+        )
+    }
+
+    private var trackedWindowBinding: Binding<TrackedWindow> {
+        Binding(
+            get: { settings.trackedWindow },
+            set: { settings.trackedWindow = $0 }
         )
     }
 
