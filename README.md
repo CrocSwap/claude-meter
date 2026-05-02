@@ -35,6 +35,10 @@ No Dock icon appears — look for the vessel icon in the menu bar (top-right of 
 
 `build.sh` runs `xcodebuild` (Release configuration, output pinned to `./build/` so it isn't lost in Xcode's hashed DerivedData) and then `open`s the app. Safe to re-run — incremental rebuilds are fast.
 
+## Coexistence with codex-meter
+
+There's a OpenAI Codex focused fork [codex-meter](https://github.com/Mister-Meeseeks/codex-meter). codex-meter ships a different bundle ID and a visually distinct AppIcon so the two can coexist in the menu bar. If you use both Claude and Codex, install both — each tracks its own subscription.
+
 ## From Xcode
 
 If you'd rather build interactively:
