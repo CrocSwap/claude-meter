@@ -20,8 +20,6 @@ cd claude-meter
 ./build.sh
 ```
 
-`build.sh` runs `xcodebuild` (Release configuration, output pinned to `./build/` so it isn't lost in Xcode's hashed DerivedData) and then `open`s the app. Safe to re-run — incremental rebuilds are fast.
-
 **First launch:** macOS shows two Keychain dialogs in sequence so claude-meter can read Claude desktop's cached OAuth token. Each one asks for your login password. This is the cost of reading another app's keychain item — the two prompts correspond to two separate ACL authorizations on the underlying entry. Click `Always Allow` on both and you'll never see them again; even `Allow` works thanks to the persistent cache claude-meter writes after the first successful read.
 
 <p>
@@ -31,7 +29,11 @@ cd claude-meter
 
 Subsequent launches are silent.
 
-The app has `LSUIElement=true`, so no Dock icon appears — look for the vessel icon in the menu bar (top-right of the screen). Click it for the popover; ⌘, opens the settings panel.
+No Dock icon appears — look for the vessel icon in the menu bar (top-right of the screen). Click it for the popover; ⌘, opens the settings panel.
+
+## Build Script 
+
+`build.sh` runs `xcodebuild` (Release configuration, output pinned to `./build/` so it isn't lost in Xcode's hashed DerivedData) and then `open`s the app. Safe to re-run — incremental rebuilds are fast.
 
 ## From Xcode
 
